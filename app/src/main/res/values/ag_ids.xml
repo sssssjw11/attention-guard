@@ -1,0 +1,23 @@
+<resources>
+    <item name="ag_root" type="id" />
+    <item name="ag_attention" type="id" />
+    <item name="ag_ledger" type="id" />
+    <item name="ag_sources" type="id" />
+    <item name="ag_profile" type="id" />
+    <item name="ag_search" type="id" />
+    <item name="ag_key" type="id" />
+    <item name="ag_model" type="id" />
+    <item name="ag_context" type="id" />
+    <item name="ag_whitelist" type="id" />
+    <item name="ag_cloud" type="id" />
+    <item name="ag_auto" type="id" />
+    <item name="ag_opacity" type="id" />
+    <item name="ag_history_title" type="id" />
+    <item name="ag_history_start" type="id" />
+    <item name="ag_history_end" type="id" />
+    <item name="ag_history_auto" type="id" />
+    <item name="ag_history_prepare" type="id" />
+    <item name="ag_archive_all" type="id" />
+    <item name="ag_archive_history" type="id" />
+    <item name="ag_archive_modes" type="id" />
+</resources>
