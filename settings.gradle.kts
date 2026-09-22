@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "jev-android"
+rootProject.name = "attention-guard"
 include(":app")

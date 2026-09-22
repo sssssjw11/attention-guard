@@ -1,4 +1,4 @@
-package com.jev.probe.capture
+package com.attentionguard.app.capture
 
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo

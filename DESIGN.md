@@ -89,7 +89,7 @@ changes, and a quiet event ledger.
   chat bubbles that imply sending, and glassmorphism that reduces text contrast.
 - **Token ownership/runtime mapping:** Existing Android resources remain canonical.
   `app/src/main/res/values/ag_tokens.xml` owns colors, dimensions, and type sizes;
-  `app/src/main/java/com/jev/probe/ui/GuardUi.kt` is the shared adapter used by
+  `app/src/main/java/com/attentionguard/app/ui/GuardUi.kt` is the shared adapter used by
   activities and the overlay. This file mirrors those values and is checked by the
   premium audit; it is not a generated Android resource.
 
@@ -207,3 +207,4 @@ the primary decision signals.
 - **Do:** Preserve local records when a read, parse, network, or save operation fails.
 - **Don't:** Present a static strategy list as if the app had scanned background groups.
 - **Don't:** imply that DeepSeek or Attention Guard can send messages on the user's behalf.
+

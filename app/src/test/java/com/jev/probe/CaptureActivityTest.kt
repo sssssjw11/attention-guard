@@ -1,4 +1,4 @@
-package com.jev.probe
+package com.attentionguard.app
 
 import android.os.Looper
 import android.view.View
@@ -9,8 +9,8 @@ import androidx.appcompat.widget.SwitchCompat
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
-import com.jev.probe.capture.*
-import com.jev.probe.core.Prefs
+import com.attentionguard.app.capture.*
+import com.attentionguard.app.core.Prefs
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Test

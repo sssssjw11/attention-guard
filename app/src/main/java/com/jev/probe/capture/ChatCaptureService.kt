@@ -1,4 +1,4 @@
-package com.jev.probe.capture
+package com.attentionguard.app.capture
 
 import android.accessibilityservice.AccessibilityService
 import android.app.KeyguardManager
@@ -9,14 +9,14 @@ import android.os.Looper
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
-import com.jev.probe.CaptureActivity
-import com.jev.probe.core.AttentionEngine
-import com.jev.probe.core.ChatSnapshot
-import com.jev.probe.core.EventStore
-import com.jev.probe.core.MessageArchive
-import com.jev.probe.core.Prefs
-import com.jev.probe.jev.DeepSeekAttentionClient
-import com.jev.probe.overlay.AttentionOverlayController
+import com.attentionguard.app.CaptureActivity
+import com.attentionguard.app.core.AttentionEngine
+import com.attentionguard.app.core.ChatSnapshot
+import com.attentionguard.app.core.EventStore
+import com.attentionguard.app.core.MessageArchive
+import com.attentionguard.app.core.Prefs
+import com.attentionguard.app.ai.DeepSeekAttentionClient
+import com.attentionguard.app.overlay.AttentionOverlayController
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
 
@@ -77,7 +77,7 @@ open class ChatCaptureService : AccessibilityService(), CaptureActions {
         receipt.interrupted()
         CaptureRuntime.history = null
         CaptureRuntime.actions = this
-        shared = getSharedPreferences("jev_assistant", MODE_PRIVATE)
+        shared = getSharedPreferences("attention_guard", MODE_PRIVATE)
         shared.registerOnSharedPreferenceChangeListener(preferenceListener)
         alive = true
         overlay = AttentionOverlayController(this).also { panel ->

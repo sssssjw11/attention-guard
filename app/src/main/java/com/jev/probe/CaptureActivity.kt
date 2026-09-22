@@ -1,4 +1,4 @@
-package com.jev.probe
+package com.attentionguard.app
 
 import android.app.DatePickerDialog
 import android.content.ClipData
@@ -21,10 +21,10 @@ import com.google.android.material.button.MaterialButtonToggleGroup
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
-import com.jev.probe.capture.*
-import com.jev.probe.core.MessageArchive
-import com.jev.probe.core.Prefs
-import com.jev.probe.ui.GuardUi
+import com.attentionguard.app.capture.*
+import com.attentionguard.app.core.MessageArchive
+import com.attentionguard.app.core.Prefs
+import com.attentionguard.app.ui.GuardUi
 import java.time.LocalDate
 import java.time.ZoneId
 import java.util.concurrent.Executors
@@ -232,5 +232,5 @@ class CaptureActivity : AppCompatActivity() {
         readGeneration++; main.removeCallbacksAndMessages(null)
         worker.execute { archive.close() }; worker.shutdown(); super.onDestroy()
     }
-    companion object { const val EXTRA_TITLE = "com.jev.probe.capture_title" }
+    companion object { const val EXTRA_TITLE = "com.attentionguard.app.capture_title" }
 }

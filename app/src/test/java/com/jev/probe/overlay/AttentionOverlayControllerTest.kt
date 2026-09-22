@@ -1,13 +1,13 @@
-package com.jev.probe.overlay
+package com.attentionguard.app.overlay
 
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import com.google.android.material.button.MaterialButton
-import com.jev.probe.MainActivity
-import com.jev.probe.core.DemoAttentionData
-import com.jev.probe.core.Prefs
+import com.attentionguard.app.MainActivity
+import com.attentionguard.app.core.DemoAttentionData
+import com.attentionguard.app.core.Prefs
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Test

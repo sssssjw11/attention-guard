@@ -1,4 +1,4 @@
-package com.jev.probe
+package com.attentionguard.app
 
 import android.content.Intent
 import android.content.res.ColorStateList
@@ -21,9 +21,9 @@ import com.google.android.material.bottomnavigation.BottomNavigationView
 import com.google.android.material.button.MaterialButtonToggleGroup
 import com.google.android.material.card.MaterialCardView
 import com.google.android.material.textfield.TextInputLayout
-import com.jev.probe.core.*
-import com.jev.probe.ui.GuardMotion
-import com.jev.probe.ui.GuardUi
+import com.attentionguard.app.core.*
+import com.attentionguard.app.ui.GuardMotion
+import com.attentionguard.app.ui.GuardUi
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -487,7 +487,7 @@ class MainActivity : AppCompatActivity() {
         .orEmpty().split(':').any { it == "$packageName/com.google.android.accessibility.selecttospeak.SelectToSpeakService" }
 
     companion object {
-        const val EXTRA_EVENT_ID = "com.jev.probe.event_id"
+        const val EXTRA_EVENT_ID = "com.attentionguard.app.event_id"
         private val TABS = intArrayOf(R.id.ag_attention, R.id.ag_ledger, R.id.ag_sources, R.id.ag_profile)
     }
 }

@@ -1,4 +1,4 @@
-package com.jev.probe.overlay
+package com.attentionguard.app.overlay
 
 import android.annotation.SuppressLint
 import android.accessibilityservice.AccessibilityService
@@ -14,21 +14,21 @@ import android.view.WindowManager
 import android.widget.LinearLayout
 import android.widget.Toast
 import androidx.appcompat.view.ContextThemeWrapper
-import com.jev.probe.MainActivity
-import com.jev.probe.R
-import com.jev.probe.core.AttentionEvent
-import com.jev.probe.core.Prefs
-import com.jev.probe.capture.CaptureDiagnostics
-import com.jev.probe.capture.HistoryState
-import com.jev.probe.capture.HistorySession
-import com.jev.probe.ui.GuardUi
+import com.attentionguard.app.MainActivity
+import com.attentionguard.app.R
+import com.attentionguard.app.core.AttentionEvent
+import com.attentionguard.app.core.Prefs
+import com.attentionguard.app.capture.CaptureDiagnostics
+import com.attentionguard.app.capture.HistoryState
+import com.attentionguard.app.capture.HistorySession
+import com.attentionguard.app.ui.GuardUi
 import kotlin.math.roundToInt
 
 /** Compact by default, no chat input access and no deferred window mounts. */
 class AttentionOverlayController(private val context: Context) {
     private val wm = context.getSystemService(WindowManager::class.java)
     private val prefs = Prefs(context)
-    private val ui = GuardUi(ContextThemeWrapper(context, R.style.Theme_JevProbe))
+    private val ui = GuardUi(ContextThemeWrapper(context, R.style.Theme_AttentionGuard))
     private var panel: LinearLayout? = null
     private var lastEvent: AttentionEvent? = null
     private var expanded = false

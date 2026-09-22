@@ -65,7 +65,7 @@ activities, `MessageArchive`, and `HistorySession`.
 - API keys are encrypted with an Android Keystore AES-GCM key. Legacy plaintext is
   read only for one migration and removed after a successful encrypted commit.
 - The current Attention Guard request path does not log keys, raw chat text, or
-  provider response bodies. Legacy Jev code is still packaged but not called by
+  provider response bodies. The DeepSeek client is packaged and called only by
   the product flow; it is outside this guarantee. The connection test sends a
   built-in sample only. A key is sent to DeepSeek as an HTTPS authorization header.
 - Event evidence is private local JSON, not application-encrypted. Android backup
@@ -166,3 +166,4 @@ replacement evidence is Gradle build, pure JVM and Robolectric tests, Android li
 APK metadata and resource inspection, plus a required future real-device pass for
 accessibility, overlay geometry, WeChat node compatibility, and touch behavior.
 Robolectric layout measurements do not constitute screenshot or pixel verification.
+

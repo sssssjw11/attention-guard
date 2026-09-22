@@ -1,4 +1,4 @@
-package com.jev.probe.core
+package com.attentionguard.app.core
 
 enum class MessageType { TEXT, IMAGE, FILE, SYSTEM, UNKNOWN }
 
@@ -36,7 +36,7 @@ data class ChatSnapshot(
         }
 }
 
-/** Jev's judgment result for one snapshot, plus the ranked candidate replies. */
+/** Optional structured model result retained for compatibility with stored data. */
 data class Analysis(
     val trueIntent: Choice?,
     val dangerLevel: Score?,

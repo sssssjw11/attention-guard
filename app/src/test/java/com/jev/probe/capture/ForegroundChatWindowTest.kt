@@ -1,4 +1,4 @@
-package com.jev.probe.capture
+package com.attentionguard.app.capture
 
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
@@ -15,12 +15,12 @@ class ForegroundChatWindowTest {
     private fun node(pkg: String) = AccessibilityNodeInfo.obtain().apply { packageName = pkg }
     private val chat = node("com.tencent.mm")
     private fun app(root: AccessibilityNodeInfo, focus: Boolean = true, layer: Int = 1) = CaptureWindow(root, AccessibilityWindowInfo.TYPE_APPLICATION, layer, focus, focus)
-    private fun choose(active: AccessibilityNodeInfo?, windows: List<CaptureWindow>) = ForegroundChatWindow.choose(active, windows, "com.jev.probe")
+    private fun choose(active: AccessibilityNodeInfo?, windows: List<CaptureWindow>) = ForegroundChatWindow.choose(active, windows, "com.attentionguard.app")
     @Test fun emptyWindowInventoryUsesOnlyActiveWeChatRoot() {
         assertSame(chat, choose(chat, emptyList())); assertNull(choose(node("other.app"), emptyList()))
     }
     @Test fun ownAccessibilityOverlayDoesNotHideForegroundChat() {
-        val own = node("com.jev.probe")
+        val own = node("com.attentionguard.app")
         assertSame(chat, choose(own, listOf(app(chat), CaptureWindow(own, AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY, 5, true, true))))
     }
     @Test fun keyboardDoesNotSelectItsInputTextAsChat() {
@@ -33,7 +33,7 @@ class ForegroundChatWindowTest {
         assertNull(choose(chat, listOf(app(chat, false), app(other, true, 3))))
     }
     @Test fun applicationScreenIsNotMistakenForOurOverlay() {
-        val own = node("com.jev.probe")
+        val own = node("com.attentionguard.app")
         assertNull(choose(own, listOf(app(chat, false), app(own, true, 4))))
     }
     @Test fun transientMissingRootCanRecoverOnlyWithFocusedChatWindow() {

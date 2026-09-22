@@ -19,8 +19,8 @@ gradle.properties.local
 
 # Dev artifacts / reports (not part of the product)
 /_reports/
-/tools/jev/report/
-/tools/jev/__pycache__/
+/tools/report/
+/tools/__pycache__/
 **/__pycache__/
 *.pyc
 hs_err_pid*.log

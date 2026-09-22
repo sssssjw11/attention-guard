@@ -17,6 +17,7 @@
 - **来源**：列出实际产生事件的会话，可按来源进入观测簿；设置中用会话名关键词限制采集范围，不提供虚构的群权重开关。
 - **Android 权限入口**：无障碍、悬浮窗、后台运行和模型设置都从 APK 内可达。
 - **采集与回溯**：从“来源”或“我的”进入；显示运行诊断、原始消息、日期范围和任务状态。普通聊天也会保存，不再依赖事件规则命中。
+- **回溯归档与复核**：回溯的每一屏先写入本机消息库，再允许下一次翻页；相邻屏重叠和跨屏指纹会查重，保留不确定日期并在任务摘要中提示缺口。事件 Gate 会做上下文自审查，P0–P3 分层：P0 立即行动、P1 明确期限、P2 需要关注、P3 仅作低置信记录。
 
 图标与界面采用用户选择的 **Orbit Relay** 方向：石墨底、银白与青绿轨道、小面积桃色端点。页面是原生 Kotlin View + Material Components，保留短入场与完成反馈动效，并尊重系统动画设置。
 
@@ -31,7 +32,7 @@
 
 ## 视觉与截图证据
 
-`DESIGN.md` 记录当前设计系统，`UX-CONTRACT.md` 记录交互约定。品牌位图位于 `app/src/main/res/drawable-nodpi/ag_brand_orbit.png`。`docs/images/overlay.png` 与 `settings.png` 是旧 Jev 界面截图，不代表 Attention Guard 1.4；本轮没有生成或宣称新的真机截图。
+`DESIGN.md` 记录当前设计系统，`UX-CONTRACT.md` 记录交互约定。品牌位图位于 `app/src/main/res/drawable-nodpi/ag_brand_orbit.png`。仓库不包含旧产品界面或旧版 APK。
 
 ## 它怎么工作
 
@@ -66,7 +67,7 @@
 
 ## 下载安装
 
-本版本构建产物位于 `app/build/outputs/apk/debug/app-debug.apk`。公开源码仓库不附带旧版 Jev APK，请按下方说明构建当前版本。
+本版本构建产物位于 `app/build/outputs/apk/debug/app-debug.apk`。请按下方说明构建当前版本。
 
 ```bash
 adb install -r app/build/outputs/apk/debug/app-debug.apk
@@ -84,7 +85,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 # 产物：app/build/outputs/apk/debug/app-debug.apk
 
 # release 签名包：把密钥库信息写在仓库外的 properties 文件里
-# （storeFile / storePassword / keyAlias / keyPassword），路径由 JEV_KEYSTORE_PROPS 指定
+# （storeFile / storePassword / keyAlias / keyPassword），路径由 ATTENTION_GUARD_KEYSTORE_PROPS 指定
 ./gradlew assembleRelease
 # 产物：app/build/outputs/apk/release/app-release.apk
 ```
@@ -109,14 +110,13 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 - **群聊**：只处理当前打开、当前可见的会话；不能后台扫描全部微信群。发送者名称依赖微信当前版本暴露的节点，节点缺失时会退化为“群成员”。
 - **识别准确率**：当前本地事件标题、优先级、截止时间和同类事项合并是启发式规则，可能误判或把同群同主题的不同事项合并。DeepSeek 结构验证只保证格式，不保证事实正确，最终应核对原始依据。
 - **回溯完整性**：日期从可见分隔标签解释，没有标签的消息单独计为日期未确认。未知日期、滚动过快、分页缺口、相同群名、重启或新会话任务均可能留下重复或遗漏；不得将计数当作完整历史备份。自动翻页不受支持或正文不可读时暂停，不用坐标手势盲滑。
-- **后端**：当前产品界面只保留 DeepSeek 官方直连；旧版 Jev/OpenRouter 类仍在源码中用于迁移兼容，但不再被产品主流程调用。
+- **后端**：当前产品界面只保留 DeepSeek 官方直连。
 - **存储规模**：事件总量暂无自动清理或分页数据库，记录很多时需要进一步性能测试。API 响应有 65,536 字符上限，异常响应不会替代本地事件。
 
 ## 目录
 
 - `app/` — Android 应用（Kotlin，传统 View，无 Compose）
-  - `capture/` 当前微信采集与前台服务 · `jev/` DeepSeek 事件客户端及未调用的旧代码 · `overlay/` 悬浮事件卡片 · `core/` 配置、事件模型与本地事件簿 · `ui/` 公共控件与动效
-- `tools/jev/` — Jev 题目集与校准脚手架（Python，PC 上跑）
+  - `capture/` 当前微信采集与前台服务 · `ai/` DeepSeek 事件客户端 · `overlay/` 悬浮事件卡片 · `core/` 配置、事件模型与本地事件簿 · `ui/` 公共控件与动效
 - `docs/` — 设计与验收文档
 
 ## 免责声明
@@ -129,6 +129,8 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 ## 来源与致谢
 
-Attention Guard 基于 [jev-chat-JARVIS](https://github.com/Finderchangchang/jev-chat-JARVIS) 继续开发，保留原作者的 MIT 许可与版权声明。当前仓库以 Attention Guard 1.4 源码快照独立维护，不代表上游项目。
+Attention Guard 是独立的开源项目，使用 MIT License。仓库不包含其他产品的名称、题库、客户端或历史界面。
 
 图标使用 Lucide，相关许可保留在 `docs/brand/lucide/LICENSE`。问题反馈请使用本仓库的 Issues。
+
+

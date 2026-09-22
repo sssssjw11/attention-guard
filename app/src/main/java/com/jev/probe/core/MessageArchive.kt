@@ -1,10 +1,10 @@
-package com.jev.probe.core
+package com.attentionguard.app.core
 
 import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
-import com.jev.probe.capture.HistoryRange
+import com.attentionguard.app.capture.HistoryRange
 import java.util.concurrent.atomic.AtomicLong
 
 /** Align neighboring visible screens. Repeated text is not a global message ID. */
@@ -29,6 +29,8 @@ object ScreenOverlap {
 data class ArchivedMessage(val id: Long, val group: String, val message: Msg, val capturedAt: Long)
 data class ArchiveCount(val total: Int, val undated: Int)
 data class ArchiveWrite(val added: Int, val gap: Boolean)
+
+data class ArchiveReview(val duplicateCount: Int, val uncertainCount: Int)
 
 /** App-private SQLite archive. It is independent of event selection and cloud calls. */
 class MessageArchive(context: Context) : SQLiteOpenHelper(context.applicationContext, "message_archive.db", null, 1) {
@@ -81,6 +83,20 @@ class MessageArchive(context: Context) : SQLiteOpenHelper(context.applicationCon
         } finally { db.endTransaction() }
         screens[stream] = next
         ArchiveWrite(added, previous.isNotEmpty() && matches.isEmpty())
+    }
+
+    /** Cross-screen duplicate check for callers that need an audit signal. */
+    fun review(stream: String): ArchiveReview = synchronized(WRITE_LOCK) {
+        val cursor = readableDatabase.rawQuery(
+            "SELECT body, side, sender, day, time_label, COUNT(*) c FROM messages WHERE stream=? GROUP BY body, side, sender, day, time_label HAVING c > 1",
+            arrayOf(stream)
+        )
+        var duplicates = 0
+        cursor.use { while (it.moveToNext()) duplicates += (it.getInt(5) - 1).coerceAtLeast(0) }
+        val uncertain = readableDatabase.rawQuery(
+            "SELECT COUNT(*) FROM messages WHERE stream=? AND day IS NULL", arrayOf(stream)
+        ).use { if (it.moveToFirst()) it.getInt(0) else 0 }
+        return ArchiveReview(duplicates, uncertain)
     }
 
     fun count(stream: String? = null): ArchiveCount {

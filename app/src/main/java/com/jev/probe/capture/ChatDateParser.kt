@@ -1,4 +1,4 @@
-package com.jev.probe.capture
+package com.attentionguard.app.capture
 
 import java.time.DayOfWeek
 import java.time.LocalDate

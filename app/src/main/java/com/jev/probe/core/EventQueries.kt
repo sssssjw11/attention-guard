@@ -1,4 +1,4 @@
-package com.jev.probe.core
+package com.attentionguard.app.core
 
 enum class EventFilter(val label: String) { ALL("全部"), ACTION("待处理"), FOLLOWING("关注中"), COMPLETED("已完成") }
 

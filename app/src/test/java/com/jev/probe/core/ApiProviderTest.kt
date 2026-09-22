@@ -1,4 +1,4 @@
-package com.jev.probe.core
+package com.attentionguard.app.core
 
 import org.junit.Assert.assertEquals
 import org.junit.Test

@@ -1,4 +1,4 @@
-package com.jev.probe.core
+package com.attentionguard.app.core
 
 import android.content.Context
 import org.json.JSONArray

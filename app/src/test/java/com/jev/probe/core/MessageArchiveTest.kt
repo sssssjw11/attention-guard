@@ -1,6 +1,6 @@
-package com.jev.probe.core
+package com.attentionguard.app.core
 
-import com.jev.probe.capture.HistoryRange
+import com.attentionguard.app.capture.HistoryRange
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Test

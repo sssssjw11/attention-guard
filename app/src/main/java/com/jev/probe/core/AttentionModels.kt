@@ -1,10 +1,11 @@
-package com.jev.probe.core
+package com.attentionguard.app.core
 
 /** Shared event model for visible-message extraction, local storage, and the UI. */
 enum class EventPriority(val label: String) {
     P0("P0"),
     P1("P1"),
-    P2("P2")
+    P2("P2"),
+    P3("P3")
 }
 
 enum class EventStatus(val label: String) {

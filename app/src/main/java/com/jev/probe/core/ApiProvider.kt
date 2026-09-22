@@ -1,4 +1,4 @@
-package com.jev.probe.core
+package com.attentionguard.app.core
 
 /**
  * Kept as a migration enum for old installs. Attention Guard only exposes

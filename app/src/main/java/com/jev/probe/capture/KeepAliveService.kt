@@ -1,4 +1,4 @@
-package com.jev.probe.capture
+package com.attentionguard.app.capture
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -9,8 +9,8 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
-import com.jev.probe.CaptureActivity
-import com.jev.probe.R
+import com.attentionguard.app.CaptureActivity
+import com.attentionguard.app.R
 
 /**
  * A minimal foreground service whose only job is to keep the app process at
@@ -23,7 +23,7 @@ class KeepAliveService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        val channelId = "jev_keepalive"
+        val channelId = "attention_guard_keepalive"
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val ch = NotificationChannel(channelId, "Attention Guard 观测中", NotificationManager.IMPORTANCE_MIN)

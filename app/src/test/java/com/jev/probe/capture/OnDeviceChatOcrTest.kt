@@ -1,10 +1,10 @@
-package com.jev.probe.capture
+package com.attentionguard.app.capture
 
 import android.accessibilityservice.AccessibilityService
 import android.graphics.Rect
 import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
-import com.jev.probe.core.ChatSnapshot
+import com.attentionguard.app.core.ChatSnapshot
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Test

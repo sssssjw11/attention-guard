@@ -1,7 +1,7 @@
-package com.jev.probe.capture
+package com.attentionguard.app.capture
 
 import android.content.Context
-import com.jev.probe.core.ChatSnapshot
+import com.attentionguard.app.core.ChatSnapshot
 import java.time.LocalDate
 import java.util.UUID
 

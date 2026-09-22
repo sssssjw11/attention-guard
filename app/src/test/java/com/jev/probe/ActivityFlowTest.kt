@@ -1,4 +1,4 @@
-package com.jev.probe
+package com.attentionguard.app
 
 import android.app.Activity
 import android.content.Intent
@@ -12,7 +12,7 @@ import com.google.android.material.bottomnavigation.BottomNavigationView
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
-import com.jev.probe.core.*
+import com.attentionguard.app.core.*
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith

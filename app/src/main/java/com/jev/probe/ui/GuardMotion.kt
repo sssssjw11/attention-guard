@@ -1,4 +1,4 @@
-package com.jev.probe.ui
+package com.attentionguard.app.ui
 
 import android.animation.AnimatorSet
 import android.animation.ObjectAnimator

@@ -4,8 +4,8 @@
 
 对照的是参考仓库提交 `d8720521fa13aa5172a891cba95c5dd8aeb44a11`，不是把远端代码直接覆盖到当前产品：
 
-- [参考采集服务](https://github.com/Finderchangchang/jev-chat-JARVIS/blob/d8720521fa13aa5172a891cba95c5dd8aeb44a11/app/src/main/java/com/jev/probe/capture/ChatCaptureService.kt) 读取前台聊天界面的无障碍树，新版另有截图 OCR 分支。
-- [参考适配器](https://github.com/Finderchangchang/jev-chat-JARVIS/blob/d8720521fa13aa5172a891cba95c5dd8aeb44a11/app/src/main/java/com/jev/probe/capture/ChatAppAdapter.kt) 使用微信气泡 ID `com.tencent.mm:id/bkl`，并区分非聊天页和有气泡但无正文的情况。
+- 参考采集服务（历史版本） 读取前台聊天界面的无障碍树，新版另有截图 OCR 分支。
+- 参考适配器（历史版本） 使用微信气泡 ID `com.tencent.mm:id/bkl`，并区分非聊天页和有气泡但无正文的情况。
 - 参考项目中的输入框写入是“填入回复”功能，并非采集机制。Attention Guard 不移植该写入功能，读取时也排除编辑器内容。
 - 历史注册类名保持不变以兼容已有授权。参考项目注释中的个别版本实验不能证明当前手机兼容，更不能证明无微信风控风险。
 
@@ -67,3 +67,5 @@
 - 开关权限、键盘、锁屏、换群、返回应用时的表现。
 
 无需发送真实聊天正文、密钥或全屏聊天截图。当前开发机没有 ADB 设备，本轮自动化不构成真实微信端到端验收。
+
+

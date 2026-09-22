@@ -1,4 +1,4 @@
-package com.jev.probe.capture
+package com.attentionguard.app.capture
 
 import android.graphics.Rect
 import android.os.Looper
@@ -8,8 +8,8 @@ import android.view.WindowManager
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import com.google.android.material.button.MaterialButton
-import com.jev.probe.core.MessageArchive
-import com.jev.probe.core.Prefs
+import com.attentionguard.app.core.MessageArchive
+import com.attentionguard.app.core.Prefs
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Test

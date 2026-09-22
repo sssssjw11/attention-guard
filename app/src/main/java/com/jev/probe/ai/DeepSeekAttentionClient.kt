@@ -1,10 +1,10 @@
-package com.jev.probe.jev
+package com.attentionguard.app.ai
 
-import com.jev.probe.core.AttentionEvent
-import com.jev.probe.core.ChatSnapshot
-import com.jev.probe.core.EventCategory
-import com.jev.probe.core.EventPriority
-import com.jev.probe.core.EventStatus
+import com.attentionguard.app.core.AttentionEvent
+import com.attentionguard.app.core.ChatSnapshot
+import com.attentionguard.app.core.EventCategory
+import com.attentionguard.app.core.EventPriority
+import com.attentionguard.app.core.EventStatus
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.OutputStream

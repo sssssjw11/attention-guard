@@ -1,4 +1,4 @@
-package com.jev.probe.core
+package com.attentionguard.app.core
 
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -10,8 +10,9 @@ object AttentionEngine {
     private val timePattern = Regex("\\d{1,2}[:：]\\d{2}")
     private val datePattern = Regex("(?:\\d{4}[-/]\\d{1,2}[-/]\\d{1,2}|\\d{1,2}[月./-]\\d{1,2}(日|号)?)")
     private val deadlinePattern = Regex("(截止|最晚|不晚于|截至|之前|前提交|前完成|前报名|前交|前发|前回复)")
-    private val actionPattern = Regex("(提交|填写|报名|参加|完成|回复|确认|上传|下载|发我|到场|登记|预约|交作业|交材料|领取)")
+    private val actionPattern = Regex("(提交|填写|报名|参加|完成|回复|确认|上传|下载|发我|到场|到课|登记|预约|交作业|交材料|领取)")
     private val locationPattern = Regex("(教室|会议室|地点|校区|\\d+号楼|\\d+[-—]\\d+|\\d+室)")
+    private val noisePattern = Regex("^(收到|好的|好滴|哈哈|谢谢|请查收|顶|已阅)[。！!、，, ]*$")
 
     @Suppress("UNUSED_PARAMETER")
     fun buildEvent(snapshot: ChatSnapshot, context: String = ""): AttentionEvent? {
@@ -19,6 +20,7 @@ object AttentionEngine {
         if (messages.isEmpty() || snapshot.title.isNullOrBlank()) return null
 
         val joined = messages.joinToString(" ") { it.text }
+        val review = reviewContext(messages, context)
         val actionable = actionPattern.containsMatchIn(joined)
         val authoritative = AUTHORITY_WORDS.any { joined.contains(it) || messages.any { m -> m.sender?.contains(it) == true } }
         val mentionsAll = joined.contains("@所有人") || joined.contains("@所有成员") ||
@@ -29,13 +31,14 @@ object AttentionEngine {
         val hasDeadline = hasDeadlineWord || hasRelativeDate || hasExplicitDate
         val hasLocation = locationPattern.containsMatchIn(joined)
         val category = categoryOf(joined)
-        val score = scoreOf(actionable, authoritative, mentionsAll, hasDeadline, hasLocation, category)
-        if (score < 26 && !actionable && !hasDeadline) return null
+        val score = (scoreOf(actionable, authoritative, mentionsAll, hasDeadline, hasLocation, category) + review.adjustment).coerceIn(0, 99)
+        if (review.suppress || (!actionable && !hasDeadline && !authoritative && !mentionsAll && !hasLocation) || (score < 26 && !actionable && !hasDeadline)) return null
 
         val priority = when {
-            score >= 78 || (mentionsAll && actionable) -> EventPriority.P0
-            score >= 52 -> EventPriority.P1
-            else -> EventPriority.P2
+            authoritative && actionable && hasDeadline && score >= 68 -> EventPriority.P0
+            score >= 78 || (actionable && hasDeadline) -> EventPriority.P1
+            actionable || hasDeadline || score >= 42 -> EventPriority.P2
+            else -> EventPriority.P3
         }
         val latest = messages.last()
         val title = titleOf(joined)
@@ -78,6 +81,21 @@ object AttentionEngine {
     fun shouldNotify(event: AttentionEvent): Boolean =
         event.priority == EventPriority.P0 || event.status == EventStatus.ACTION_REQUIRED || event.dueLabel != null
 
+    private data class ContextReview(val adjustment: Int, val suppress: Boolean)
+
+    /** Self-review reduces false positives from acknowledgements and weak isolated cues. */
+    private fun reviewContext(messages: List<Msg>, context: String): ContextReview {
+        val meaningful = messages.count { !noisePattern.matches(it.text.trim()) }
+        val hasDistinctSenders = messages.mapNotNull { it.sender }.distinct().size > 1
+        val hasEvidence = messages.any { actionPattern.containsMatchIn(it.text) || deadlinePattern.containsMatchIn(it.text) }
+        val contradiction = messages.any { it.text.contains("取消") || it.text.contains("作废") || it.text.contains("不用") }
+        val weakContext = context.isBlank() && meaningful <= 1 && !hasEvidence
+        return ContextReview(
+            adjustment = (if (meaningful >= 3) 5 else 0) + (if (hasDistinctSenders) 3 else 0) - (if (contradiction) 12 else 0),
+            suppress = weakContext || meaningful == 0
+        )
+    }
+
     private fun scoreOf(
         actionable: Boolean,
         authoritative: Boolean,
@@ -119,9 +137,9 @@ object AttentionEngine {
         val date = datePattern.find(text)?.value
         return when {
             date != null -> "$date${time?.let { " $it" } ?: ""}"
-            text.contains("今天") -> "今日${time?.let { " $it" } ?: ""}"
-            text.contains("明天") -> "明日${time?.let { " $it" } ?: ""}"
-            text.contains("后天") -> "后日${time?.let { " $it" } ?: ""}"
+            text.contains("今天") && (actionPattern.containsMatchIn(text) || deadlinePattern.containsMatchIn(text)) -> "今日${time?.let { " $it" } ?: ""}"
+            text.contains("明天") && (actionPattern.containsMatchIn(text) || deadlinePattern.containsMatchIn(text)) -> "明日${time?.let { " $it" } ?: ""}"
+            text.contains("后天") && (actionPattern.containsMatchIn(text) || deadlinePattern.containsMatchIn(text)) -> "后日${time?.let { " $it" } ?: ""}"
             deadlinePattern.containsMatchIn(text) -> "请确认截止时间"
             else -> null
         }
@@ -147,3 +165,5 @@ object AttentionEngine {
 
     private val AUTHORITY_WORDS = listOf("老师", "辅导员", "班长", "团支书", "学习委员", "学院", "教务", "就业中心", "管理员")
 }
+
+

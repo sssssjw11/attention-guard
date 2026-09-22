@@ -1,7 +1,7 @@
-package com.jev.probe.capture
+package com.attentionguard.app.capture
 
-import com.jev.probe.core.ChatSnapshot
-import com.jev.probe.core.Msg
+import com.attentionguard.app.core.ChatSnapshot
+import com.attentionguard.app.core.Msg
 import org.junit.Assert.*
 import org.junit.Test
 import java.time.LocalDate

@@ -1,8 +1,8 @@
-package com.jev.probe.capture
+package com.attentionguard.app.capture
 
 import android.graphics.Rect
 import android.view.accessibility.AccessibilityNodeInfo
-import com.jev.probe.core.MessageType
+import com.attentionguard.app.core.MessageType
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -175,8 +175,8 @@ class WeChatAdapterTest {
     }
 
     @Test fun identicalLastEightMessagesDoNotMaskChangedTopOfScreen() {
-        val old = com.jev.probe.core.ChatSnapshot("group", (1..10).map { com.jev.probe.core.Msg("other", "text $it") })
-        val changed = old.copy(messages = listOf(com.jev.probe.core.Msg("other", "new first")) + old.messages.drop(1))
+        val old = com.attentionguard.app.core.ChatSnapshot("group", (1..10).map { com.attentionguard.app.core.Msg("other", "text $it") })
+        val changed = old.copy(messages = listOf(com.attentionguard.app.core.Msg("other", "new first")) + old.messages.drop(1))
         assertNotEquals(old.signature(), changed.signature())
     }
 }

@@ -1,11 +1,11 @@
-package com.jev.probe.capture
+package com.attentionguard.app.capture
 
 import android.content.res.Resources
 import android.graphics.Rect
 import android.view.accessibility.AccessibilityNodeInfo
-import com.jev.probe.core.ChatSnapshot
-import com.jev.probe.core.MessageType
-import com.jev.probe.core.Msg
+import com.attentionguard.app.core.ChatSnapshot
+import com.attentionguard.app.core.MessageType
+import com.attentionguard.app.core.Msg
 import kotlin.math.abs
 
 interface ChatAppAdapter {

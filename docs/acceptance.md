@@ -4,7 +4,7 @@
 
 ## 交付产物
 
-- package：`com.jev.probe`；versionName：`1.4`；versionCode：`5`。
+- package：`com.attentionguard.app`；versionName：`1.4`；versionCode：`5`。
 - 原生 Kotlin View + Material Components，minSdk 30 / targetSdk 35；只保留 DeepSeek 产品配置。
 - APK：`app/build/outputs/apk/debug/app-debug.apk`，59,801,582 字节，开发用 debug 签名。
 - SHA-256：`7CBC97775C552336701C465789C1A0A7C4477F7A0671C85B53B4AF9F12081C69`。

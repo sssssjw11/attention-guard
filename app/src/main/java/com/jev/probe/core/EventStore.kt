@@ -1,4 +1,4 @@
-package com.jev.probe.core
+package com.attentionguard.app.core
 
 import android.content.Context
 import org.json.JSONArray
@@ -118,7 +118,7 @@ class EventStore(context: Context) {
             summary = json.optString("summary"),
             sourceGroup = json.optString("sourceGroup"),
             sourcePerson = json.optString("sourcePerson"),
-            priority = enumOr(EventPriority.P2, json.optString("priority")),
+            priority = enumOr(EventPriority.P3, json.optString("priority")),
             status = enumOr(EventStatus.MONITORING, json.optString("status")),
             previousStatus = json.optString("previousStatus").takeIf { it.isNotBlank() && it != "null" }?.let {
                 enumOr(EventStatus.ACTION_REQUIRED, it)

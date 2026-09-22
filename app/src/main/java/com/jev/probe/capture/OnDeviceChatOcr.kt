@@ -1,4 +1,4 @@
-package com.jev.probe.capture
+package com.attentionguard.app.capture
 
 import android.accessibilityservice.AccessibilityService
 import android.graphics.Bitmap
@@ -10,8 +10,8 @@ import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.TextRecognizer
 import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions
-import com.jev.probe.core.ChatSnapshot
-import com.jev.probe.core.Msg
+import com.attentionguard.app.core.ChatSnapshot
+import com.attentionguard.app.core.Msg
 
 /** Opt-in, local-only fallback restricted to proven, visible text-bubble rectangles. */
 class OnDeviceChatOcr(private val service: AccessibilityService, private val hideOverlay: (Boolean) -> Unit) {

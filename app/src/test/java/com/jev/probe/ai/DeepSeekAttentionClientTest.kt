@@ -1,6 +1,6 @@
-package com.jev.probe.jev
+package com.attentionguard.app.ai
 
-import com.jev.probe.core.*
+import com.attentionguard.app.core.*
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.*

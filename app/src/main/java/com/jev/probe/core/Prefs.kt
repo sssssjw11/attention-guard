@@ -1,4 +1,4 @@
-package com.jev.probe.core
+package com.attentionguard.app.core
 
 import android.content.Context
 
@@ -10,7 +10,7 @@ import android.content.Context
  */
 class Prefs(context: Context) {
 
-    private val sp = context.getSharedPreferences("jev_assistant", Context.MODE_PRIVATE)
+    private val sp = context.getSharedPreferences("attention_guard", Context.MODE_PRIVATE)
 
     var openRouterKey: String
         get() = sp.getString(K_KEY, "") ?: ""

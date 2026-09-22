@@ -1,4 +1,4 @@
-package com.jev.probe
+package com.attentionguard.app
 
 import android.os.Bundle
 import android.os.Handler
@@ -17,9 +17,9 @@ import com.google.android.material.button.MaterialButton
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
-import com.jev.probe.core.*
-import com.jev.probe.jev.DeepSeekAttentionClient
-import com.jev.probe.ui.GuardUi
+import com.attentionguard.app.core.*
+import com.attentionguard.app.ai.DeepSeekAttentionClient
+import com.attentionguard.app.ui.GuardUi
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
 

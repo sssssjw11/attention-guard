@@ -1,4 +1,4 @@
-package com.jev.probe.ui
+package com.attentionguard.app.ui
 
 import android.content.Context
 import android.content.res.ColorStateList
@@ -22,8 +22,8 @@ import com.google.android.material.button.MaterialButton
 import com.google.android.material.snackbar.Snackbar
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
-import com.jev.probe.R
-import com.jev.probe.core.EventPriority
+import com.attentionguard.app.R
+import com.attentionguard.app.core.EventPriority
 import kotlin.math.roundToInt
 
 /** Canonical native primitives. Resource tokens are shared by app and overlay. */
@@ -118,6 +118,7 @@ class GuardUi(val context: Context) {
         EventPriority.P0 -> color(R.color.ag_danger) to color(R.color.ag_danger_soft)
         EventPriority.P1 -> color(R.color.ag_warning) to color(R.color.ag_warning_soft)
         EventPriority.P2 -> color(R.color.ag_info) to color(R.color.ag_info_soft)
+        EventPriority.P3 -> color(R.color.ag_secondary) to color(R.color.ag_background)
     }
 
     fun divider(top: Int = 16) = View(context).apply { setBackgroundColor(line); layoutParams = lp(top, dp(1)) }
@@ -186,3 +187,4 @@ class GuardUi(val context: Context) {
         ViewCompat.requestApplyInsets(root)
     }
 }
+
