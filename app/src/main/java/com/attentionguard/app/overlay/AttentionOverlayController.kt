@@ -105,14 +105,22 @@ class AttentionOverlayController(private val context: Context) {
         header.addView(handle)
         val label = when { loading -> if (usingModel) "DeepSeek 整理中" else "本地整理中"; event != null -> "${event.priority.label} · 新事件"; else -> "Attention Guard" }
         header.addView(ui.text(label, R.dimen.ag_type_label, ui.brand, true), LinearLayout.LayoutParams(0, -2, 1f))
+        if (prefs.overlayCollapsed) {
+            header.addView(ui.iconButton(R.drawable.ag_chevron_right, "展开 Attention Guard") { prefs.overlayCollapsed = false; render() })
+        } else {
+            header.addView(ui.iconButton(R.drawable.ag_minimize_2, "收起悬浮卡片") { prefs.overlayCollapsed = true; render() })
+        }
         header.addView(ui.iconButton(R.drawable.ag_x, "关闭悬浮卡片") { onHistoryPause?.invoke(); hide(); onDismiss?.invoke() })
         view.addView(header)
+        if (prefs.overlayCollapsed) {
+            view.addView(ui.button("回溯收集", R.drawable.ag_clock_3, false) { onHistorySettings?.invoke() })
+        }
         group?.takeIf { it.isNotBlank() }?.let {
             view.addView(ui.text(it, R.dimen.ag_type_caption, ui.sub).apply {
                 maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END
             })
         }
-        if (history != null) {
+        if (!prefs.overlayCollapsed && history != null) {
             val session = requireNotNull(history)
             view.addView(ui.text("${session.state.label} · ${session.screens} 屏", R.dimen.ag_type_label, ui.brand, true))
             if (session.reason.isNotBlank()) view.addView(ui.text(session.reason, R.dimen.ag_type_caption, ui.sub).apply { layoutParams = ui.lp(4) })
@@ -123,13 +131,13 @@ class AttentionOverlayController(private val context: Context) {
             controls.addView(ui.iconButton(R.drawable.ag_x, "结束回溯") { onHistoryCancel?.invoke() })
             controls.addView(ui.iconButton(R.drawable.ag_notebook_tabs, "查看采集记录") { onHistorySettings?.invoke() })
             view.addView(controls)
-        } else if (expanded && event != null) {
+        } else if (!prefs.overlayCollapsed && expanded && event != null) {
             view.addView(ui.text(event.title, R.dimen.ag_type_heading, bold = true).apply { layoutParams = ui.lp(4) })
             view.addView(ui.text(event.summary, R.dimen.ag_type_label, ui.sub).apply { layoutParams = ui.lp(8) })
             event.dueLabel?.let { view.addView(ui.text(it, R.dimen.ag_type_label, ui.priority(event.priority).first, true).apply { layoutParams = ui.lp(12) }) }
             view.addView(ui.button("打开观测簿", R.drawable.ag_arrow_up_right) { openApp() }.apply { layoutParams = ui.lp(12) })
             view.addView(ui.button("收起", R.drawable.ag_minimize_2, false) { expanded = false; render() }.apply { layoutParams = ui.lp(8) })
-        } else if (!loading) {
+        } else if (!prefs.overlayCollapsed && !loading) {
             view.addView(ui.text(status, R.dimen.ag_type_caption, ui.sub).apply { layoutParams = ui.lp(4) })
             view.addView(ui.button(event?.title ?: actionLabel, if (event == null) R.drawable.ag_focus else R.drawable.ag_chevron_down, false) {
                 if (event != null) { expanded = true; render() } else onManualAnalyze?.invoke()
@@ -137,7 +145,7 @@ class AttentionOverlayController(private val context: Context) {
             view.addView(ui.button("采集与回溯", R.drawable.ag_clock_3, false) { onHistorySettings?.invoke() }.apply { layoutParams = ui.lp(4) })
         }
         val bounds = wm.currentWindowMetrics.bounds
-        val width = minOf(ui.dp(if (expanded) 312 else 256), bounds.width() - ui.dp(24))
+        val width = minOf(ui.dp(if (prefs.overlayCollapsed) 116 else if (expanded) 312 else 256), bounds.width() - ui.dp(24))
         val type = if (accessibilityWindow) WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY else WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
         val lp = WindowManager.LayoutParams(width, -2, type,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT).apply {
@@ -182,3 +190,6 @@ class AttentionOverlayController(private val context: Context) {
         }.onFailure { toast("暂时无法打开，请从桌面进入 Attention Guard") }
     }
 }
+
+
+

@@ -87,6 +87,19 @@ class AttentionOverlayControllerTest {
         assertTrue(windows.views.isEmpty())
     }
 
+    @Test fun collapsedCardKeepsHistoryActionAndCanExpand() {
+        ShadowSettings.setCanDrawOverlays(true)
+        prefs.overlayCollapsed = true
+        var opened = false
+        overlay.onHistorySettings = { opened = true }
+        overlay.showIdle("Test group")
+        assertTrue(overlay.isShowing())
+        button("回溯收集").performClick()
+        assertTrue(opened)
+        descendants(windows.views.single()).first { it.contentDescription == "展开 Attention Guard" }.performClick()
+        assertFalse(prefs.overlayCollapsed)
+    }
+
     private fun showAtRememberedPosition() {
         ShadowSettings.setCanDrawOverlays(true)
         prefs.bubbleX = 40

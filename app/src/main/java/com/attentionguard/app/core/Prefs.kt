@@ -82,6 +82,11 @@ class Prefs(context: Context) {
         get() = sp.getInt(K_OPACITY, 92).coerceIn(60, 100)
         set(v) = sp.edit().putInt(K_OPACITY, v.coerceIn(60, 100)).apply()
 
+    /** Keep the WeChat-side card collapsed between captures. */
+    var overlayCollapsed: Boolean
+        get() = sp.getBoolean(K_COLLAPSED, false)
+        set(v) = sp.edit().putBoolean(K_COLLAPSED, v).apply()
+
     /** Remembered vertical position of the bubble (px); -1 = default. */
     var bubbleY: Int
         get() = sp.getInt(K_BUBBLE_Y, -1)
@@ -122,6 +127,7 @@ class Prefs(context: Context) {
         private const val K_WHITELIST = "whitelist"
         private const val K_OPACITY = "overlay_opacity"
         private const val K_BUBBLE_Y = "bubble_y"
+        private const val K_COLLAPSED = "overlay_collapsed"
         private const val K_BUBBLE_X = "bubble_x"
         private const val K_AUTO = "auto_analyze"
 
@@ -131,3 +137,5 @@ class Prefs(context: Context) {
         const val DEFAULT_REL = "这是校园微信群；优先关注老师、辅导员、班委发布的通知、截止时间和明确行动要求。"
     }
 }
+
+
