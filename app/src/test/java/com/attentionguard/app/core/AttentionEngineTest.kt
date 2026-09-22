@@ -3,6 +3,7 @@ package com.attentionguard.app.core
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AttentionEngineTest {
@@ -61,4 +62,18 @@ class AttentionEngineTest {
         assertNotNull(secondEvent)
         assertEquals(firstEvent?.id, secondEvent?.id)
     }
+
+    @Test
+    fun weakActionKeepsReviewNoteAndDoesNotEscalate() {
+        val event = AttentionEngine.buildEvent(ChatSnapshot(
+            title = "课程群",
+            messages = listOf(Msg("other", "请关注后续安排，报名意向请回复", "群成员"))
+        ))
+        assertNotNull(event)
+        assertEquals(EventPriority.P2, event?.priority)
+        assertTrue(event?.reviewNotes?.any { it.contains("明确行动要求") } == true)
+    }
 }
+
+
+

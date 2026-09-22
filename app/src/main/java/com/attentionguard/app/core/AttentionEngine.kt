@@ -74,7 +74,15 @@ object AttentionEngine {
             consequence = consequenceOf(joined),
             updatedLabel = "$now 更新",
             updates = updates,
-            evidence = messages.takeLast(4).map { it.text.take(160) }.distinct()
+            evidence = messages.takeLast(4).map { it.text.take(160) }.distinct(),
+            reviewNotes = buildList {
+                if (authoritative) add("来源包含老师、班委或管理方信号")
+                if (actionable) add("检测到明确行动要求")
+                if (hasDeadline) add("检测到日期、时间或截止表达")
+                if (mentionsAll) add("消息面向全体成员")
+                if (review.adjustment < 0) add("上下文存在取消或作废信号，已降低置信度")
+                if (priority == EventPriority.P3) add("证据较弱，仅作为低优先级记录")
+            }
         )
     }
 

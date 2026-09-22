@@ -55,6 +55,7 @@ class EventStore(context: Context) {
             previousStatus = old.previousStatus,
             updates = updates.takeLast(8),
             evidence = (old.evidence + fresh.evidence).distinct().takeLast(6),
+            reviewNotes = fresh.reviewNotes.ifEmpty { old.reviewNotes }.distinct().takeLast(6),
             updatedLabel = fresh.updatedLabel.ifBlank { old.updatedLabel }
         )
     }
@@ -105,6 +106,7 @@ class EventStore(context: Context) {
             }
         })
         put("evidence", JSONArray(event.evidence))
+        put("reviewNotes", JSONArray(event.reviewNotes))
     }
 
     private fun fromJson(json: JSONObject): AttentionEvent {
@@ -144,6 +146,9 @@ class EventStore(context: Context) {
                 }
             }.orEmpty(),
             evidence = json.optJSONArray("evidence")?.let { array ->
+                buildList(array.length()) { for (i in 0 until array.length()) add(array.optString(i)) }
+            }.orEmpty(),
+            reviewNotes = json.optJSONArray("reviewNotes")?.let { array ->
                 buildList(array.length()) { for (i in 0 until array.length()) add(array.optString(i)) }
             }.orEmpty()
         )

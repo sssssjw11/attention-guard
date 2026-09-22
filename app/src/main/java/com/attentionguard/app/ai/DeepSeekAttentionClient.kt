@@ -36,7 +36,7 @@ class DeepSeekAttentionClient internal constructor(
             字段必须完整：title, summary, category, priority, status, attention_score,
             due_label, action_label, consequence, source_person。
             category 只能是 academic_admin, course, employment, competition, activity。
-            priority 只能是 P0, P1, P2。
+            priority 只能是 P0, P1, P2, P3。不得仅因为措辞强烈就提高等级，必须有对应证据。
             status 只能是 action_required, monitoring, confirmed。只有用户可以标记完成。
             attention_score 是 1 到 99 的整数；没有明确截止时间时 due_label 为空字符串。
         """.trimIndent()
@@ -152,7 +152,7 @@ class DeepSeekAttentionClient internal constructor(
                 require(clean(result.getString("title")).isNotBlank())
                 require(clean(result.getString("summary")).isNotBlank())
                 require(result.getString("category") in setOf("academic_admin", "course", "employment", "competition", "activity"))
-                require(result.getString("priority") in setOf("P0", "P1", "P2"))
+                require(result.getString("priority") in setOf("P0", "P1", "P2", "P3"))
                 require(result.getString("status") in setOf("action_required", "monitoring", "confirmed"))
                 val score = result.get("attention_score")
                 require(score is Number && score.toDouble() in 1.0..99.0 && score.toDouble() == score.toInt().toDouble())
@@ -185,6 +185,7 @@ class DeepSeekAttentionClient internal constructor(
         "P0" -> EventPriority.P0
         "P1" -> EventPriority.P1
         "P2" -> EventPriority.P2
+        "P3" -> EventPriority.P3
         else -> fallback
     }
 

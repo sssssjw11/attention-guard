@@ -355,6 +355,12 @@ class MainActivity : AppCompatActivity() {
         if (evidenceOpen) {
             if (event.evidence.isEmpty()) body.addView(ui.text("暂无保留的原始消息", tint = ui.sub).apply { layoutParams = ui.lp(16) })
             event.evidence.forEach { body.addView(ui.text(it, tint = ui.sub).apply { layoutParams = ui.lp(16); setTextIsSelectable(true) }) }
+            if (event.reviewNotes.isNotEmpty()) {
+                body.addView(ui.text("判定复核", R.dimen.ag_type_label, ui.brand, true).apply { layoutParams = ui.lp(16) })
+                event.reviewNotes.forEach { note ->
+                    body.addView(ui.text("· $note", R.dimen.ag_type_caption, ui.sub).apply { layoutParams = ui.lp(4) })
+                }
+            }
         }
         val complete = event.status == EventStatus.COMPLETED
         shell.addView(ui.column().apply {
@@ -491,3 +497,4 @@ class MainActivity : AppCompatActivity() {
         private val TABS = intArrayOf(R.id.ag_attention, R.id.ag_ledger, R.id.ag_sources, R.id.ag_profile)
     }
 }
+

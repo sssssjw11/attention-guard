@@ -48,6 +48,7 @@ data class AttentionEvent(
     val updatedLabel: String,
     val updates: List<EventUpdate>,
     val evidence: List<String> = emptyList(),
+    val reviewNotes: List<String> = emptyList(),
     val previousStatus: EventStatus? = null,
     val analysisSource: String = "本地规则"
 )
