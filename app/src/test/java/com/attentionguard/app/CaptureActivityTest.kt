@@ -26,14 +26,28 @@ import org.robolectric.shadows.ShadowDialog
 @Config(sdk = [30], qualifiers = "w360dp-h800dp-mdpi")
 class CaptureActivityTest {
     @After fun reset() { CaptureRuntime.actions = null; CaptureRuntime.history = null }
-    @Test fun screenStartsWithDiagnosticsAndAutomaticScrollingOff() {
+    @Test fun historyIsFirstAndAutomaticScrollingIsOff() {
         val controller = Robolectric.buildActivity(CaptureActivity::class.java).setup()
         try {
             val activity = controller.get(); shadowOf(Looper.getMainLooper()).idle()
             assertFalse(activity.findViewById<SwitchCompat>(R.id.ag_history_auto).isChecked)
+            assertTrue(activity.findViewById<MaterialButton>(R.id.ag_history_prepare).isShown)
+            val diagnosis = children(activity.window.decorView).filterIsInstance<MaterialButton>().first { it.text == "复制诊断" }
+            assertFalse(diagnosis.isShown)
             assertTrue(children(activity.window.decorView).filterIsInstance<TextView>().any { it.text.contains("未连接") })
             activity.findViewById<MaterialButton>(R.id.ag_history_prepare).performClick()
             assertTrue(children(activity.window.decorView).filterIsInstance<TextInputLayout>().any { it.error != null })
+        } finally { controller.pause().stop().destroy() }
+    }
+
+    @Test fun selectedWorkspaceTabSurvivesRecreation() {
+        val controller = Robolectric.buildActivity(CaptureActivity::class.java).setup()
+        try {
+            val tabs = children(controller.get().window.decorView).filterIsInstance<com.google.android.material.tabs.TabLayout>().single()
+            tabs.getTabAt(2)!!.select()
+            controller.recreate()
+            assertEquals(2, children(controller.get().window.decorView).filterIsInstance<com.google.android.material.tabs.TabLayout>().single().selectedTabPosition)
+            assertFalse(controller.get().findViewById<MaterialButton>(R.id.ag_history_prepare).isShown)
         } finally { controller.pause().stop().destroy() }
     }
     @Test fun prepareRequiresConfirmationAndDoesNotStartRunning() {

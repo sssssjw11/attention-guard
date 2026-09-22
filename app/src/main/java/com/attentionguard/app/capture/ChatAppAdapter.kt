@@ -105,14 +105,16 @@ class WeChatAdapter : ChatAppAdapter {
             }
         }
         val selected = candidates.distinct().filter { item -> candidates.none { other -> other != item && inside(item, other) } }
-        val firstTop = selected.minOfOrNull { entries[it].bounds.top } ?: Int.MAX_VALUE
-        val actionBarBottom = minOf(firstTop, viewport.top + minOf((140 * density).toInt(), viewport.height() / 4))
-        val title = entries.filter { e ->
+        val titleLimit = viewport.top + minOf((140 * density).toInt(), viewport.height() / 4)
+        val titleEntry = entries.filterIndexed { index, e ->
             val text = e.node.text?.toString()?.trim().orEmpty()
             e.visible && !e.blocked && text.isNotEmpty() && text.length <= 120 && ChatDateParser.parse(text) == null &&
                 text !in listOf("返回", "微信", "搜索", "聊天信息", "更多") &&
-                e.bounds.bottom < actionBarBottom && e.bounds.centerX() in (viewport.left + viewport.width() / 4)..(viewport.right - viewport.width() / 5)
-        }.minWithOrNull(compareBy<Entry> { it.bounds.top }.thenByDescending { it.bounds.width() })?.node?.text?.toString()?.trim()
+                selected.none { inside(index, it) } && e.bounds.bottom < titleLimit &&
+                e.bounds.centerX() in (viewport.left + viewport.width() / 4)..(viewport.right - viewport.width() / 5)
+        }.minWithOrNull(compareBy<Entry> { it.bounds.top }.thenByDescending { it.bounds.width() })
+        val title = titleEntry?.node?.text?.toString()?.trim()
+        val actionBarBottom = titleEntry?.bounds?.bottom ?: titleLimit
         val structural = selected.size - known.size
         if (selected.isEmpty() || (known.isEmpty() && title.isNullOrBlank()))
             return ChatInspection(null, entries.size, known.size, 0, if (entries.size <= 2) "微信未开放可读节点" else "未确认聊天气泡，可能不是聊天页或当前版本不兼容")

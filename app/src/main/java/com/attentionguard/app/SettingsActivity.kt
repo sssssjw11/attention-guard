@@ -104,15 +104,15 @@ class SettingsActivity : AppCompatActivity() {
         body.addView(auto)
         body.addView(ui.divider(24))
         body.addView(ui.heading("悬浮卡片"))
-        val opacityLabel = ui.text("不透明度 · ${prefs.overlayOpacity}%", R.dimen.ag_type_label, ui.sub).apply { layoutParams = ui.lp(16) }
+        val opacityLabel = ui.text("背景不透明度 · ${prefs.overlayOpacity.coerceAtLeast(96)}%", R.dimen.ag_type_label, ui.sub).apply { layoutParams = ui.lp(16) }
         body.addView(opacityLabel)
         opacity = SeekBar(this).apply {
             id = R.id.ag_opacity
-            max = 40; progress = prefs.overlayOpacity - 60
+            max = 4; progress = prefs.overlayOpacity.coerceAtLeast(96) - 96
             contentDescription = "悬浮卡片不透明度"
             minHeight = ui.dp(48)
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(bar: SeekBar?, value: Int, fromUser: Boolean) { opacityLabel.text = "不透明度 · ${value + 60}%" }
+                override fun onProgressChanged(bar: SeekBar?, value: Int, fromUser: Boolean) { opacityLabel.text = "背景不透明度 · ${value + 96}%" }
                 override fun onStartTrackingTouch(bar: SeekBar?) = Unit
                 override fun onStopTrackingTouch(bar: SeekBar?) = Unit
             })
@@ -166,7 +166,7 @@ class SettingsActivity : AppCompatActivity() {
             prefs.relationship = context.text.toString().trim().ifBlank { Prefs.DEFAULT_REL }
             prefs.whitelist = whitelist.text.toString().lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toSet()
             prefs.autoAnalyze = auto.isChecked
-            prefs.overlayOpacity = opacity.progress + 60
+            prefs.overlayOpacity = opacity.progress + 96
             prefs.cloudEnabled = cloud.isChecked
         }.onSuccess {
             original = values()

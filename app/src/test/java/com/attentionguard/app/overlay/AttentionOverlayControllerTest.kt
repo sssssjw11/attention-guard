@@ -8,6 +8,8 @@ import com.google.android.material.button.MaterialButton
 import com.attentionguard.app.MainActivity
 import com.attentionguard.app.core.DemoAttentionData
 import com.attentionguard.app.core.Prefs
+import com.attentionguard.app.capture.*
+import java.time.LocalDate
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Test
@@ -94,10 +96,35 @@ class AttentionOverlayControllerTest {
         overlay.onHistorySettings = { opened = true }
         overlay.showIdle("Test group")
         assertTrue(overlay.isShowing())
-        button("回溯收集").performClick()
+        descendants(windows.views.single()).first { it.contentDescription == "回溯收集" }.performClick()
         assertTrue(opened)
         descendants(windows.views.single()).first { it.contentDescription == "展开 Attention Guard" }.performClick()
         assertFalse(prefs.overlayCollapsed)
+    }
+
+    @Test fun compactControlsFitAndPauseIsAlwaysReachable() {
+        ShadowSettings.setCanDrawOverlays(true)
+        prefs.overlayCollapsed = true
+        val day = LocalDate.now()
+        val session = HistorySession(HistoryConfig("Test group", HistoryRange(day, day), true))
+        session.start("Test group", 0L)
+        var paused = false
+        overlay.onHistoryPause = { paused = true }
+        overlay.showIdle("Test group", history = session)
+        val view = windows.views.single()
+        val width = (view.layoutParams as WindowManager.LayoutParams).width
+        view.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(800, View.MeasureSpec.AT_MOST))
+        view.layout(0, 0, view.measuredWidth, view.measuredHeight)
+        assertEquals(152, view.measuredWidth)
+        assertEquals(56, view.measuredHeight)
+        val actions = descendants(view).filter { it.isClickable }.toList()
+        assertEquals(3, actions.size)
+        assertTrue(actions.all { it.width >= 48 && it.height >= 48 && it.right <= width })
+        actions.first { it.contentDescription == "暂停回溯" }.performClick()
+        assertTrue(paused)
+        val mounted = windows.views.single()
+        overlay.showIdle("Test group", "different status", session)
+        assertSame(mounted, windows.views.single())
     }
 
     private fun showAtRememberedPosition() {

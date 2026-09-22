@@ -51,6 +51,11 @@ activities, `MessageArchive`, and `HistorySession`.
   demo mode so real notifications never display an unrelated demo event.
 - Tab, filter, query, detail ID, evidence disclosure, list limit, and each tab's
   scroll position survive activity recreation.
+- The capture workspace has History, Records and Diagnostics tabs; the selected
+  tab and history draft survive recreation. Preparation locks the active draft.
+  Returning to WeChat still requires the in-chat Start/Resume action.
+- Permission and health are separate: a granted service with no live same-process
+  connection or a heartbeat older than 10 seconds is disconnected, not observing.
 - The search clear affordance clears immediately and resets the result list.
 - Empty states distinguish “no events” from “no matching events” and offer a path
   to settings or demo mode where appropriate.
@@ -109,8 +114,11 @@ DeepSeek or used for automatic event creation. No geometry evidence means no OCR
   An all-known screen older than the start ends traversal but never proves full
   coverage. Undated repeats can be updated when neighboring overlap exposes a day.
 - Deduplication aligns adjacent screens with ordered, nonambiguous overlap; it is
-  not global text hashing. Single repeated words, title collisions, content changes,
-  restart, or nonoverlapping screens can produce duplicates/gaps. Preserve evidence
+  not global text hashing. A transactional, bounded checkpoint recognizes an exact
+  viewport replay in the same stream within two minutes of service reconnection.
+  A schema-v1 to v2 migration preserves existing messages. Single repeated words,
+  title collisions, content changes, older restarts or nonoverlapping screens can
+  produce duplicates/gaps. Preserve evidence
   rather than silently discard it. Session progress reports gaps, not a fake percent.
 - A ready/running/paused history target is isolated from live AI analysis; history
   scans and OCR results do not trigger DeepSeek. No archive-wide AI batch is added.
@@ -148,6 +156,22 @@ DeepSeek or used for automatic event creation. No geometry evidence means no OCR
   only the user may mark an event completed. Valid empty optional fields clear
   heuristic due/action/consequence guesses.
 
+## Priority Evidence (1.5)
+
+- Select one actionable notice and only adjacent, explicit corrections from the
+  same known sender. This is conservative, not multi-topic semantic understanding.
+- P0 requires action, a calendar-validated deadline within 24 hours, and a sender
+  role or all-members signal. Sender labels are not verified identities.
+- P1 covers action with a future deadline or source/all-members signal; P2 covers
+  weaker action or expired notices pending review; P3 covers weak/cancelled items.
+- Relative dates require a message-day separator. Invalid or ambiguous dates are
+  marked for review and cannot trigger P0. Past deadlines do not become new urgent
+  actions. Adjacent corrections retain the original event identity and evidence.
+- DeepSeek cannot raise priority above the local evidence gate or replace the
+  source-validated date with its own date. It may lower priority or clear a date.
+- Existing event records are not erased or bulk reclassified during upgrade.
+  Invalid legacy date labels are marked for review in the UI, preserving evidence.
+
 ## Accessibility and localization
 
 - All interactive targets are at least 48dp and icon-only controls have Chinese
@@ -163,7 +187,7 @@ DeepSeek or used for automatic event creation. No geometry evidence means no OCR
 Browser E2E, CSS scrollbar assertions, HTML select popup tests, and web pixel
 regression are not applicable to this traditional Android View project. The
 replacement evidence is Gradle build, pure JVM and Robolectric tests, Android lint,
-APK metadata and resource inspection, plus a required future real-device pass for
-accessibility, overlay geometry, WeChat node compatibility, and touch behavior.
+APK metadata and resource inspection, plus the bounded real-device audit recorded
+in `docs/device-audit-1.5.md`. Untested configurations remain explicitly pending.
 Robolectric layout measurements do not constitute screenshot or pixel verification.
 

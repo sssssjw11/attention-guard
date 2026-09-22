@@ -149,6 +149,9 @@ supporting information only.
 
 `GuardUi.button` is the canonical button owner. Solid brand buttons are reserved for
 the primary action in a screen. Outlined buttons are used for secondary actions.
+Buttons have no default Material elevation. `GuardUi.navigationRow` owns flat
+two-line navigation rows; the label, state and chevron are one accessible target.
+`GuardUi.metric` uses separate numeric and caption roles for the home counters.
 Icon-only controls are used for navigation, close, search-clear, settings,
 overlay movement and history pause/stop; each has a Chinese content description
 and tooltip.
@@ -171,14 +174,19 @@ is read-only, draggable with a reset affordance, and never edits or sends chat t
 
 ### Capture and history workspace
 
-`CaptureActivity` retains the same neutral unframed scroll layout. Diagnosis,
-date-range preparation and raw-message records are separated by headings and
-dividers, not nested cards. History uses a native date picker, a default-off
+`CaptureActivity` retains the same neutral unframed scroll layout. Date-range
+preparation, raw-message records and diagnosis have native tabs, with one visible
+scroll owner. The in-chat entry opens the history tab; the profile diagnosis entry
+opens diagnostics. History uses a native date picker, a default-off
 automatic-scroll switch, explicit prepare/confirm and in-chat start controls.
 The overlay shows the actual conversation name and a text state with pause/stop
 controls; it never suggests that all history was recovered. Message rows separate
 source, day confidence and raw text; OCR results carry a verification label.
 Progress counts observed pages and reports gaps rather than inventing a percent.
+The collapsed overlay is a 152dp by 56dp toolbar with three 48dp controls: move,
+history/pause/resume, expand. History pause remains reachable when collapsed.
+Only the background opacity is adjustable (96-100%); text and icons stay opaque.
+Changing state updates the existing window instead of removing and remounting it.
 
 ### Iconography
 

@@ -93,4 +93,42 @@ class MessageArchiveTest {
         assertEquals(0, archive.count().total)
         assertEquals(1, archive.append(screen("new"), "live").added)
     }
+
+    @Test fun exactRecentViewportReplaySurvivesReconnectionWithoutDuplicatingRows() {
+        val page = screen("notice a", "notice b")
+        archive.append(page, "live")
+        MessageArchive(context).use { reopened ->
+            assertEquals(0, reopened.append(page.copy(capturedAt = page.capturedAt + 1500), "live").added)
+            assertEquals(2, reopened.count().total)
+        }
+    }
+
+    @Test fun expiredReplayDoesNotDiscardLaterIdenticalNotices() {
+        val page = screen("same notice")
+        archive.append(page, "live")
+        MessageArchive(context).use { reopened ->
+            assertEquals(1, reopened.append(page.copy(capturedAt = page.capturedAt + 120_001), "live").added)
+        }
+    }
+
+    @Test fun cancellationBeforeCommitRollsBackMessagesAndCheckpoint() {
+        var checks = 0
+        val page = screen("new a", "new b")
+        assertEquals(0, archive.append(page, "live", canWrite = { ++checks == 1 }).added)
+        assertEquals(0, archive.count().total)
+        assertEquals(2, archive.append(page, "live").added)
+    }
+
+    @Test fun versionOneDatabaseUpgradePreservesMessages() {
+        val path = context.getDatabasePath("message_archive.db")
+        path.parentFile!!.mkdirs()
+        android.database.sqlite.SQLiteDatabase.openOrCreateDatabase(path, null).use { db ->
+            db.execSQL("CREATE TABLE messages (_id INTEGER PRIMARY KEY AUTOINCREMENT, stream TEXT NOT NULL, group_title TEXT NOT NULL, body TEXT NOT NULL, side TEXT NOT NULL, sender TEXT, day TEXT, time_label TEXT, kind TEXT NOT NULL, capture_method TEXT NOT NULL, captured_at INTEGER NOT NULL)")
+            db.execSQL("INSERT INTO messages(stream,group_title,body,side,kind,capture_method,captured_at) VALUES ('live','group','preserved','other','TEXT','nodes',1)")
+            db.version = 1
+        }
+        assertEquals("preserved", archive.recent().single().message.text)
+        assertEquals(1, archive.append(screen("new"), "live").added)
+        assertEquals(2, archive.count().total)
+    }
 }

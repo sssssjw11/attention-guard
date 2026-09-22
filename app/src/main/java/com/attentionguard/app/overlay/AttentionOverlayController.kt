@@ -11,6 +11,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowManager
+import android.view.WindowInsets
 import android.widget.LinearLayout
 import android.widget.Toast
 import androidx.appcompat.view.ContextThemeWrapper
@@ -47,6 +48,7 @@ class AttentionOverlayController(private val context: Context) {
     private var startX = 0
     private var startY = 0
     private var dragged = false
+    private var dragging = false
     var onManualAnalyze: (() -> Unit)? = null
     var onHistorySettings: (() -> Unit)? = null
     var onHistoryStart: (() -> Unit)? = null
@@ -67,7 +69,8 @@ class AttentionOverlayController(private val context: Context) {
     }
     fun showIdle(group: String?, status: String = "正在监测可见消息", history: HistorySession? = null,
                  actionLabel: String = "整理当前会话") {
-        val key = "$group|$status|${history?.state}|${history?.screens}|${history?.reason}|$actionLabel"
+        val key = if (history == null) "$group|$status|$actionLabel" else
+            "$group|${history.id}|${history.state}|${history.screens}|${history.attempts}|${history.reason}"
         if (panel != null && renderKey == key && lastEvent == null && !loading) return
         this.group = group; this.status = status; this.history = history; this.actionLabel = actionLabel
         lastEvent = null; loading = false; expanded = false; render(); renderKey = key
@@ -78,7 +81,9 @@ class AttentionOverlayController(private val context: Context) {
     }
     fun showEvent(event: AttentionEvent) {
         history = null
-        lastEvent = event; loading = false; expanded = false; render()
+        if (lastEvent?.id != event.id) expanded = false
+        group = event.sourceGroup
+        lastEvent = event; loading = false; render()
     }
     fun showError(message: String) { hide(); toast(message) }
     fun toast(message: String) = Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
@@ -87,16 +92,15 @@ class AttentionOverlayController(private val context: Context) {
     // Semantic click, tap, drag, and cancel are covered by the overlay tests.
     @SuppressLint("ClickableViewAccessibility")
     private fun render() {
-        if (!prefs.enabled) return
+        if (!prefs.enabled || dragging) return
         if (!accessibilityWindow && !Settings.canDrawOverlays(context)) { diagnostics.overlay("缺少悬浮窗权限"); return }
-        hide()
         val event = lastEvent
+        val collapsed = prefs.overlayCollapsed
         val view = ui.column().apply {
             visibility = if (hiddenForCapture) View.INVISIBLE else View.VISIBLE
-            background = ui.shape()
+            background = ui.shape().apply { alpha = (prefs.overlayOpacity.coerceIn(96, 100) * 255 / 100) }
             elevation = ui.dp(6).toFloat()
-            alpha = prefs.overlayOpacity / 100f
-            setPadding(ui.dp(8), ui.dp(4), ui.dp(8), ui.dp(8))
+            setPadding(ui.dp(4), ui.dp(4), ui.dp(4), ui.dp(if (collapsed) 4 else 12))
         }
         val header = ui.row()
         val handle = ui.iconButton(R.drawable.ag_move, "拖动卡片；点按复位") {
@@ -104,20 +108,24 @@ class AttentionOverlayController(private val context: Context) {
         }
         header.addView(handle)
         val label = when { loading -> if (usingModel) "DeepSeek 整理中" else "本地整理中"; event != null -> "${event.priority.label} · 新事件"; else -> "Attention Guard" }
-        header.addView(ui.text(label, R.dimen.ag_type_label, ui.brand, true), LinearLayout.LayoutParams(0, -2, 1f))
-        if (prefs.overlayCollapsed) {
+        if (collapsed) {
+            val session = history
+            when (session?.state) {
+                HistoryState.RUNNING -> header.addView(ui.iconButton(R.drawable.ag_pause, "暂停回溯") { onHistoryPause?.invoke() })
+                HistoryState.READY, HistoryState.PAUSED -> header.addView(ui.iconButton(R.drawable.ag_radio, if (session.state == HistoryState.READY) "开始回溯" else "继续回溯") { onHistoryStart?.invoke() })
+                else -> header.addView(ui.iconButton(R.drawable.ag_clock_3, "回溯收集") { onHistorySettings?.invoke() })
+            }
             header.addView(ui.iconButton(R.drawable.ag_chevron_right, "展开 Attention Guard") { prefs.overlayCollapsed = false; render() })
         } else {
+            header.addView(ui.text(label, R.dimen.ag_type_label, ui.brand, true).apply { maxLines = 2 }, LinearLayout.LayoutParams(0, -2, 1f))
             header.addView(ui.iconButton(R.drawable.ag_minimize_2, "收起悬浮卡片") { prefs.overlayCollapsed = true; render() })
+            header.addView(ui.iconButton(R.drawable.ag_x, "关闭悬浮卡片") { onHistoryPause?.invoke(); hide(); onDismiss?.invoke() })
         }
-        header.addView(ui.iconButton(R.drawable.ag_x, "关闭悬浮卡片") { onHistoryPause?.invoke(); hide(); onDismiss?.invoke() })
         view.addView(header)
-        if (prefs.overlayCollapsed) {
-            view.addView(ui.button("回溯收集", R.drawable.ag_clock_3, false) { onHistorySettings?.invoke() })
-        }
-        group?.takeIf { it.isNotBlank() }?.let {
+        if (!collapsed) group?.takeIf { it.isNotBlank() }?.let {
             view.addView(ui.text(it, R.dimen.ag_type_caption, ui.sub).apply {
-                maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END
+                setPadding(ui.dp(12), 0, ui.dp(12), ui.dp(6))
+                maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
             })
         }
         if (!prefs.overlayCollapsed && history != null) {
@@ -144,41 +152,59 @@ class AttentionOverlayController(private val context: Context) {
             })
             view.addView(ui.button("采集与回溯", R.drawable.ag_clock_3, false) { onHistorySettings?.invoke() }.apply { layoutParams = ui.lp(4) })
         }
-        val bounds = wm.currentWindowMetrics.bounds
-        val width = minOf(ui.dp(if (prefs.overlayCollapsed) 116 else if (expanded) 312 else 256), bounds.width() - ui.dp(24))
+        val metrics = wm.currentWindowMetrics
+        val bounds = metrics.bounds
+        val insets = metrics.windowInsets.getInsetsIgnoringVisibility(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+        val width = minOf(ui.dp(if (collapsed) 152 else if (expanded) 312 else 280), bounds.width() - insets.left - insets.right - ui.dp(16))
+        view.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(bounds.height() - insets.top - insets.bottom, View.MeasureSpec.AT_MOST))
+        val maxX = (bounds.width() - insets.right - width).coerceAtLeast(insets.left)
+        val maxY = (bounds.height() - insets.bottom - insets.top - view.measuredHeight).coerceAtLeast(0)
         val type = if (accessibilityWindow) WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY else WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
         val lp = WindowManager.LayoutParams(width, -2, type,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = (if (prefs.bubbleX >= 0) prefs.bubbleX else bounds.width() - width - ui.dp(12)).coerceIn(0, (bounds.width() - width).coerceAtLeast(0))
-            y = (if (prefs.bubbleY >= 0) prefs.bubbleY else ui.dp(80)).coerceIn(0, (bounds.height() - ui.dp(280)).coerceAtLeast(0))
+            x = (if (prefs.bubbleX >= 0) prefs.bubbleX else maxX - ui.dp(8)).coerceIn(insets.left, maxX)
+            y = (if (prefs.bubbleY >= 0) prefs.bubbleY else ui.dp(96)).coerceIn(0, maxY)
         }
         val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
         val dragListener = View.OnTouchListener { target, motion ->
             when (motion.actionMasked) {
-                MotionEvent.ACTION_DOWN -> { downX = motion.rawX; downY = motion.rawY; startX = lp.x; startY = lp.y; dragged = false; true }
+                MotionEvent.ACTION_DOWN -> { downX = motion.rawX; downY = motion.rawY; startX = lp.x; startY = lp.y; dragged = false; dragging = true; true }
                 MotionEvent.ACTION_MOVE -> {
                     if (kotlin.math.abs(motion.rawX - downX) > touchSlop || kotlin.math.abs(motion.rawY - downY) > touchSlop) dragged = true
                     if (!dragged) return@OnTouchListener true
-                    lp.x = (startX + motion.rawX - downX).roundToInt().coerceIn(0, (bounds.width() - width).coerceAtLeast(0))
-                    lp.y = (startY + motion.rawY - downY).roundToInt().coerceIn(0, (bounds.height() - view.height - ui.dp(24)).coerceAtLeast(0))
-                    runCatching { wm.updateViewLayout(view, lp) }; true
+                    lp.x = (startX + motion.rawX - downX).roundToInt().coerceIn(insets.left, maxX)
+                    lp.y = (startY + motion.rawY - downY).roundToInt().coerceIn(0, maxY)
+                    panel?.let { runCatching { wm.updateViewLayout(it, lp) } }; true
                 }
                 MotionEvent.ACTION_UP -> {
+                    dragging = false
                     if (!dragged) target.performClick()
-                    else { prefs.bubbleX = lp.x; prefs.bubbleY = lp.y }
+                    else { prefs.bubbleX = lp.x; prefs.bubbleY = lp.y; render() }
                     true
                 }
                 MotionEvent.ACTION_CANCEL -> {
-                    lp.x = startX; lp.y = startY; dragged = false
-                    runCatching { wm.updateViewLayout(view, lp) }
+                    lp.x = startX; lp.y = startY; dragged = false; dragging = false
+                    panel?.let { runCatching { wm.updateViewLayout(it, lp) } }
                     true
                 }
                 else -> false
             }
         }
         handle.setOnTouchListener(dragListener)
-        runCatching { wm.addView(view, lp); panel = view; diagnostics.overlay(if (accessibilityWindow) "无障碍悬浮窗已显示" else "应用悬浮窗已显示") }
+        runCatching {
+            val mounted = panel
+            if (mounted == null) { wm.addView(view, lp); panel = view }
+            else {
+                mounted.removeAllViews()
+                mounted.background = view.background
+                mounted.setPadding(view.paddingLeft, view.paddingTop, view.paddingRight, view.paddingBottom)
+                while (view.childCount > 0) { val child = view.getChildAt(0); view.removeView(child); mounted.addView(child) }
+                wm.updateViewLayout(mounted, lp)
+            }
+            diagnostics.overlay(if (accessibilityWindow) "无障碍悬浮窗已显示" else "应用悬浮窗已显示")
+        }
             .onFailure { diagnostics.overlay("挂窗失败：${it.javaClass.simpleName}") }
     }
     private fun openApp() {

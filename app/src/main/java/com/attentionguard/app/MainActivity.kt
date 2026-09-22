@@ -22,6 +22,7 @@ import com.google.android.material.button.MaterialButtonToggleGroup
 import com.google.android.material.card.MaterialCardView
 import com.google.android.material.textfield.TextInputLayout
 import com.attentionguard.app.core.*
+import com.attentionguard.app.capture.CaptureDiagnostics
 import com.attentionguard.app.ui.GuardMotion
 import com.attentionguard.app.ui.GuardUi
 import java.text.SimpleDateFormat
@@ -178,11 +179,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun attention() {
         title("注意力", SimpleDateFormat("M月d日 EEEE", Locale.SIMPLIFIED_CHINESE).format(Date()))
-        val status = when {
-            !prefs.enabled -> "已暂停"
-            !isA11yEnabled() -> "尚未开启采集"
-            else -> "已授权 · 仅当前会话"
-        }
+        val status = CaptureDiagnostics(this).healthLabel(prefs.enabled, isA11yEnabled())
         body.addView(actionRow(R.drawable.ag_radio, status, if (prefs.cloudEnabled && prefs.hasKey()) "DeepSeek 增强已启用" else "本地整理", false) {
             switchTab(R.id.ag_profile)
         }.apply { layoutParams = ui.lp(16) })
@@ -192,9 +189,9 @@ class MainActivity : AppCompatActivity() {
         body.addView(ui.row().apply {
             setPadding(0, ui.dp(20), 0, ui.dp(4))
             listOf(Triple(pending, "待处理", EventFilter.ACTION), Triple(following, "关注中", EventFilter.FOLLOWING), Triple(done, "已完成", EventFilter.COMPLETED)).forEach { item ->
-                addView(ui.button("${item.first}\n${item.second}", primary = false) {
+                addView(ui.metric(item.first, item.second, if (item.third == EventFilter.ACTION) ui.color(R.color.ag_warning) else ui.brand) {
                     filter = item.third; switchTab(R.id.ag_ledger)
-                }.apply { setPadding(0, ui.dp(8), 0, ui.dp(8)) }, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = ui.dp(4) })
+                }, LinearLayout.LayoutParams(0, -2, 1f))
             }
         })
         if (events.isEmpty()) {
@@ -287,9 +284,9 @@ class MainActivity : AppCompatActivity() {
             }, LinearLayout.LayoutParams(0, -2, 1f))
             addView(ui.icon(R.drawable.ag_chevron_right, size = 18))
         })
-        content.addView(ui.text(event.title, R.dimen.ag_type_heading, bold = true).apply { layoutParams = ui.lp(12) })
-        if (featured) content.addView(ui.text(event.summary, tint = ui.sub).apply { layoutParams = ui.lp(6) })
-        event.dueLabel?.let { due ->
+        content.addView(ui.text(event.title, R.dimen.ag_type_heading, bold = true).apply { layoutParams = ui.lp(12); maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END })
+        if (featured) content.addView(ui.text(event.summary, R.dimen.ag_type_label, ui.sub).apply { layoutParams = ui.lp(8); maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END })
+        DeadlineParser.displayLabel(event.dueLabel)?.let { due ->
             content.addView(ui.text(due, R.dimen.ag_type_label, tone, true).apply { layoutParams = ui.lp(12) })
         }
         content.addView(ui.text(event.sourceGroup, R.dimen.ag_type_caption, ui.sub).apply { layoutParams = ui.lp(8) })
@@ -329,7 +326,19 @@ class MainActivity : AppCompatActivity() {
             addView(ui.badge(event.priority.label, tone, tint))
             addView(ui.text(event.status.label, tint = ui.brand).apply { setPadding(ui.dp(12), 0, 0, 0) })
         })
-        event.dueLabel?.let { body.addView(ui.heading("时间")); body.addView(ui.text(it, tint = tone).apply { layoutParams = ui.lp(10) }) }
+        body.addView(ui.heading("判定摘要"))
+        body.addView(ui.callout(
+            "为什么是 ${event.priority.label}",
+            priorityExplanation(event),
+            tone,
+            tint,
+            if (event.priority == EventPriority.P0) R.drawable.ag_circle_alert else R.drawable.ag_shield_check
+        ).apply { layoutParams = ui.lp(8) })
+        DeadlineParser.displayLabel(event.dueLabel)?.let { body.addView(ui.heading("时间")); body.addView(ui.text(it, tint = tone).apply { layoutParams = ui.lp(10) }) }
+        if (event.reviewNotes.isNotEmpty()) {
+            body.addView(ui.heading("复核提示"))
+            event.reviewNotes.forEach { body.addView(ui.text(it, R.dimen.ag_type_label, ui.sub).apply { layoutParams = ui.lp(8) }) }
+        }
         event.actionLabel?.let { body.addView(ui.heading("下一步")); body.addView(ui.text(it).apply { layoutParams = ui.lp(10) }) }
         event.consequence?.let { body.addView(ui.text(it, R.dimen.ag_type_label, ui.sub).apply { layoutParams = ui.lp(8) }) }
         body.addView(ui.divider(24))
@@ -355,12 +364,6 @@ class MainActivity : AppCompatActivity() {
         if (evidenceOpen) {
             if (event.evidence.isEmpty()) body.addView(ui.text("暂无保留的原始消息", tint = ui.sub).apply { layoutParams = ui.lp(16) })
             event.evidence.forEach { body.addView(ui.text(it, tint = ui.sub).apply { layoutParams = ui.lp(16); setTextIsSelectable(true) }) }
-            if (event.reviewNotes.isNotEmpty()) {
-                body.addView(ui.text("判定复核", R.dimen.ag_type_label, ui.brand, true).apply { layoutParams = ui.lp(16) })
-                event.reviewNotes.forEach { note ->
-                    body.addView(ui.text("· $note", R.dimen.ag_type_caption, ui.sub).apply { layoutParams = ui.lp(4) })
-                }
-            }
         }
         val complete = event.status == EventStatus.COMPLETED
         shell.addView(ui.column().apply {
@@ -380,6 +383,13 @@ class MainActivity : AppCompatActivity() {
             })
         })
     }
+
+    private fun priorityExplanation(event: AttentionEvent): String = when (event.priority) {
+        EventPriority.P0 -> "已同时确认明确行动、日历有效且 24 小时内的截止时间，以及老师/管理员或全体通知信号。"
+        EventPriority.P1 -> "存在明确行动，并且有未来截止时间或可靠的来源信号；仍建议打开原始依据核对。"
+        EventPriority.P2 -> "检测到行动或时间线索，但证据还不足以自动升级为紧急事项。"
+        EventPriority.P3 -> "当前证据不足、已过期或出现取消/作废信号，因此不会自动升级。"
+    } + if (event.analysisSource != "本地规则") " DeepSeek 只补充解释，不能越过本地等级门槛。" else " 本地规则优先于模型建议。"
 
     private fun sources() {
         title("来源", "仅记录当前可见会话")
@@ -409,11 +419,14 @@ class MainActivity : AppCompatActivity() {
         })
         body.addView(ui.heading("设备权限"))
         body.addView(actionRow(R.drawable.ag_radio, "采集诊断与消息记录", "连接状态、读取原因与落盘时间") {
-            startActivity(Intent(this, CaptureActivity::class.java))
+            startActivity(Intent(this, CaptureActivity::class.java).putExtra(CaptureActivity.EXTRA_SECTION, 2))
         })
-        body.addView(actionRow(R.drawable.ag_eye, "无障碍采集", if (isA11yEnabled()) "已授权" else "未授权") {
+        body.addView(actionRow(R.drawable.ag_eye, "无障碍采集", CaptureDiagnostics(this).healthLabel(prefs.enabled, isA11yEnabled())) {
             launchSystem(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         })
+        if (prefs.enabled && isA11yEnabled() && !CaptureDiagnostics(this).isConnected()) {
+            body.addView(ui.text("请在系统无障碍页面关闭后重新开启 Attention Guard。授权存在不代表服务仍在运行。", R.dimen.ag_type_label, ui.color(R.color.ag_warning)).apply { layoutParams = ui.lp(8) })
+        }
         body.addView(actionRow(R.drawable.ag_messages_square, "应用悬浮权限", "可选；采集使用无障碍悬浮窗") {
             launchSystem(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
         })
@@ -435,17 +448,16 @@ class MainActivity : AppCompatActivity() {
             addView(ui.column().apply {
                 setPadding(ui.dp(12), 0, 0, 0)
                 addView(ui.text("Attention Guard", bold = true))
-                addView(ui.text("版本 1.4 · 本地消息与事件簿", R.dimen.ag_type_caption, ui.sub).apply { layoutParams = ui.lp(6) })
+                addView(ui.text("版本 ${BuildConfig.VERSION_NAME} · 本地消息与事件簿", R.dimen.ag_type_caption, ui.sub).apply { layoutParams = ui.lp(6) })
             }, LinearLayout.LayoutParams(0, -2, 1f))
         })
     }
 
     private fun actionRow(icon: Int, title: String, subtitle: String, divider: Boolean = true, action: () -> Unit): View =
         ui.column().apply {
-            addView(ui.button(title, icon, false, action).apply { gravity = Gravity.START or Gravity.CENTER_VERTICAL })
-            addView(ui.text(subtitle, R.dimen.ag_type_label, ui.sub).apply { setPadding(ui.dp(16), ui.dp(4), ui.dp(8), ui.dp(12)) })
+            addView(ui.navigationRow(icon, title, subtitle, action))
             if (divider) addView(ui.divider(0))
-            layoutParams = ui.lp(12)
+            layoutParams = ui.lp(4)
         }
 
     private fun empty(title: String, subtitle: String, actions: Boolean) {

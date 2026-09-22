@@ -3,12 +3,15 @@ package com.attentionguard.app.core
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.Duration
+import java.security.MessageDigest
 
 /** Fast, offline attention gate used before any DeepSeek request. */
 object AttentionEngine {
 
-    private val timePattern = Regex("\\d{1,2}[:：]\\d{2}")
-    private val datePattern = Regex("(?:\\d{4}[-/]\\d{1,2}[-/]\\d{1,2}|\\d{1,2}[月./-]\\d{1,2}(日|号)?)")
     private val deadlinePattern = Regex("(截止|最晚|不晚于|截至|之前|前提交|前完成|前报名|前交|前发|前回复)")
     private val actionPattern = Regex("(提交|填写|报名|参加|完成|回复|确认|上传|下载|发我|到场|到课|登记|预约|交作业|交材料|领取)")
     private val locationPattern = Regex("(教室|会议室|地点|校区|\\d+号楼|\\d+[-—]\\d+|\\d+室)")
@@ -16,32 +19,49 @@ object AttentionEngine {
 
     @Suppress("UNUSED_PARAMETER")
     fun buildEvent(snapshot: ChatSnapshot, context: String = ""): AttentionEvent? {
-        val messages = snapshot.messages.filter { it.text.isNotBlank() }.takeLast(12)
-        if (messages.isEmpty() || snapshot.title.isNullOrBlank()) return null
-
-        val joined = messages.joinToString(" ") { it.text }
+        val visible = snapshot.messages.filter { it.text.isNotBlank() && !noisePattern.matches(it.text.trim()) }.takeLast(12)
+        if (visible.isEmpty() || snapshot.title.isNullOrBlank()) return null
+        // Only connect adjacent corrections from the same identifiable sender.
+        // Independent notices never lend each other a deadline or authority.
+        val anchorIndex = visible.indexOfLast { hasAction(it.text) && !correction.containsMatchIn(it.text) }
+            .takeIf { it >= 0 } ?: visible.lastIndex
+        val anchor = visible[anchorIndex]
+        val followups = visible.drop(anchorIndex + 1).takeWhile {
+            anchor.sender != null && it.sender == anchor.sender &&
+                (correction.containsMatchIn(it.text) || it.text.startsWith("逾期") || it.text.startsWith("否则"))
+        }
+        val messages = listOf(anchor) + followups
+        val latestCorrection = followups.lastOrNull { correction.containsMatchIn(it.text) }
+        val joined = (latestCorrection ?: anchor).text
         val review = reviewContext(messages, context)
-        val actionable = actionPattern.containsMatchIn(joined)
-        val authoritative = AUTHORITY_WORDS.any { joined.contains(it) || messages.any { m -> m.sender?.contains(it) == true } }
+        val cancelled = Regex("取消|作废|无需|不用|不必").containsMatchIn(joined)
+        val actionable = hasAction(anchor.text) && !cancelled
+        val authoritative = AUTHORITY_WORDS.any { anchor.sender?.contains(it) == true }
         val mentionsAll = joined.contains("@所有人") || joined.contains("@所有成员") ||
             joined.contains("@全体") || joined.contains("全体成员")
         val hasDeadlineWord = deadlinePattern.containsMatchIn(joined)
-        val hasRelativeDate = (joined.contains("今天") || joined.contains("明天") || joined.contains("后天")) && actionable
-        val hasExplicitDate = (datePattern.containsMatchIn(joined) || timePattern.containsMatchIn(joined)) && actionable
-        val hasDeadline = hasDeadlineWord || hasRelativeDate || hasExplicitDate
+        val nowDateTime = Instant.ofEpochMilli(snapshot.capturedAt).atZone(ZoneId.systemDefault()).toLocalDateTime()
+        val deadlineMessage = latestCorrection ?: anchor
+        val messageDay = deadlineMessage.date?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+        val deadline = DeadlineParser.parse(joined, messageDay, nowDateTime.toLocalDate())
+        val hasDeadline = deadline.at != null || hasDeadlineWord
+        val hours = deadline.at?.let { Duration.between(nowDateTime, it).toMinutes() / 60.0 }
+        val expired = hours != null && hours < 0
         val hasLocation = locationPattern.containsMatchIn(joined)
         val category = categoryOf(joined)
         val score = (scoreOf(actionable, authoritative, mentionsAll, hasDeadline, hasLocation, category) + review.adjustment).coerceIn(0, 99)
         if (review.suppress || (!actionable && !hasDeadline && !authoritative && !mentionsAll && !hasLocation) || (score < 26 && !actionable && !hasDeadline)) return null
 
         val priority = when {
-            authoritative && actionable && hasDeadline && score >= 68 -> EventPriority.P0
-            score >= 78 || (actionable && hasDeadline) -> EventPriority.P1
+            cancelled -> EventPriority.P3
+            expired -> EventPriority.P2
+            actionable && hours != null && hours in 0.0..24.0 && (authoritative || mentionsAll) -> EventPriority.P0
+            actionable && (deadline.at != null || authoritative || mentionsAll) -> EventPriority.P1
             actionable || hasDeadline || score >= 42 -> EventPriority.P2
             else -> EventPriority.P3
         }
         val latest = messages.last()
-        val title = titleOf(joined)
+        val title = titleOf(anchor.text)
         val now = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
         val updates = messages.takeLast(4).map { message ->
             val sender = message.sender ?: if (message.side == "me") "我" else "群成员"
@@ -54,10 +74,9 @@ object AttentionEngine {
         }
         val sourcePerson = messages.mapNotNull { it.sender }.distinct().take(2).joinToString(" / ")
             .ifBlank { if (authoritative) "老师 / 班委" else "群成员" }
-        val dueLabel = dueLabelOf(joined)
-        val eventId = stableId(snapshot.title + "|" + title)
-        val summary = messages.firstOrNull { actionPattern.containsMatchIn(it.text) }?.text
-            ?: latest.text
+        val dueLabel = if (cancelled) null else deadline.label
+        val eventId = stableId(snapshot.title + "|" + anchor.sender.orEmpty() + "|" + anchor.date.orEmpty() + "|" + anchor.text.trim())
+        val summary = (latestCorrection ?: anchor).text
 
         return AttentionEvent(
             id = eventId,
@@ -66,19 +85,24 @@ object AttentionEngine {
             sourceGroup = snapshot.title,
             sourcePerson = sourcePerson,
             priority = priority,
-            status = if (actionable) EventStatus.ACTION_REQUIRED else if (hasDeadline) EventStatus.CONFIRMED else EventStatus.MONITORING,
+            status = if (cancelled || expired) EventStatus.MONITORING else if (actionable) EventStatus.ACTION_REQUIRED else EventStatus.MONITORING,
             category = category,
             attentionScore = score.coerceIn(1, 99),
             dueLabel = dueLabel,
-            actionLabel = actionLabelOf(joined),
+            actionLabel = if (cancelled) null else actionLabelOf(anchor.text),
             consequence = consequenceOf(joined),
             updatedLabel = "$now 更新",
             updates = updates,
             evidence = messages.takeLast(4).map { it.text.take(160) }.distinct(),
             reviewNotes = buildList {
-                if (authoritative) add("来源包含老师、班委或管理方信号")
+                if (authoritative) add("发送者名称包含管理方信号，身份尚未验证")
                 if (actionable) add("检测到明确行动要求")
-                if (hasDeadline) add("检测到日期、时间或截止表达")
+                if (deadline.at != null) add("日期已通过日历校验")
+                deadline.note?.let { add(it) }
+                if (expired) add("截止时间已过，保留记录而非升级紧急提醒")
+                if (priority == EventPriority.P0) add("明确行动且截止在 24 小时内，存在来源或全体通知信号")
+                if (latestCorrection != null) add("同一发送者的相邻更正覆盖旧时间，保留原始依据")
+                if (cancelled) add("存在取消或作废信号，待人工核对，不自动标记完成")
                 if (mentionsAll) add("消息面向全体成员")
                 if (review.adjustment < 0) add("上下文存在取消或作废信号，已降低置信度")
                 if (priority == EventPriority.P3) add("证据较弱，仅作为低优先级记录")
@@ -128,29 +152,26 @@ object AttentionEngine {
         text.contains("调课") || text.contains("教室") -> "课程安排更新"
         text.contains("作业") || text.contains("实验报告") -> "课程作业与实验要求"
         text.contains("招聘") || text.contains("双选会") || text.contains("宣讲") -> "就业活动提醒"
-        text.contains("竞赛") || text.contains("报名") -> "竞赛 / 活动报名"
-        else -> "群聊事项：${text.trim().replace(Regex("\\s+"), " ").take(22)}"
+        text.contains("重修") -> "重修报名安排"
+        text.contains("竞赛") || text.contains("比赛") -> "竞赛报名"
+        text.contains("报名") -> "报名安排"
+        else -> text.replace(Regex("https?://\\S+|@所有人|@所有成员"), "").trim(' ', '：', ':').replace(Regex("\\s+"), " ").take(26)
     }
 
     private fun categoryOf(text: String): EventCategory = when {
         text.contains("就业") || text.contains("招聘") || text.contains("双选") || text.contains("宣讲") -> EventCategory.EMPLOYMENT
-        text.contains("竞赛") || text.contains("报名") || text.contains("比赛") -> EventCategory.COMPETITION
-        text.contains("调课") || text.contains("作业") || text.contains("实验") || text.contains("课程") -> EventCategory.COURSE
+        text.contains("竞赛") || text.contains("比赛") -> EventCategory.COMPETITION
+        text.contains("调课") || text.contains("作业") || text.contains("实验") || text.contains("课程") || text.contains("重修") -> EventCategory.COURSE
         text.contains("活动") || text.contains("讲座") || text.contains("志愿") -> EventCategory.ACTIVITY
         else -> EventCategory.ACADEMIC_ADMIN
     }
 
-    private fun dueLabelOf(text: String): String? {
-        val time = timePattern.find(text)?.value?.replace('：', ':')
-        val date = datePattern.find(text)?.value
-        return when {
-            date != null -> "$date${time?.let { " $it" } ?: ""}"
-            text.contains("今天") && (actionPattern.containsMatchIn(text) || deadlinePattern.containsMatchIn(text)) -> "今日${time?.let { " $it" } ?: ""}"
-            text.contains("明天") && (actionPattern.containsMatchIn(text) || deadlinePattern.containsMatchIn(text)) -> "明日${time?.let { " $it" } ?: ""}"
-            text.contains("后天") && (actionPattern.containsMatchIn(text) || deadlinePattern.containsMatchIn(text)) -> "后日${time?.let { " $it" } ?: ""}"
-            deadlinePattern.containsMatchIn(text) -> "请确认截止时间"
-            else -> null
-        }
+    private val correction = Regex("更正|改为|改到|调整为|取消|作废|无需|不用|以.{0,12}为准")
+    private fun hasAction(text: String): Boolean {
+        if (Regex("^(请问|是否|怎么|能否)").containsMatchIn(text.trim())) return false
+        if (Regex("已(经)?(提交|完成|报名|回复)|完成搬迁").containsMatchIn(text) && !text.contains("请")) return false
+        return actionPattern.containsMatchIn(text) &&
+            (Regex("请|须|务必|需要|记得|尽快|统一|截止|最晚|之前|前提交|报名时间|报名登记").containsMatchIn(text))
     }
 
     private fun actionLabelOf(text: String): String? = when {
@@ -169,7 +190,8 @@ object AttentionEngine {
         else -> null
     }
 
-    private fun stableId(value: String): String = "event_${value.trim().lowercase(Locale.getDefault()).hashCode().toString(16).replace('-', 'n')}"
+    private fun stableId(value: String): String = "event_v2_" + MessageDigest.getInstance("SHA-256")
+        .digest(value.toByteArray(Charsets.UTF_8)).take(16).joinToString("") { "%02x".format(it) }
 
     private val AUTHORITY_WORDS = listOf("老师", "辅导员", "班长", "团支书", "学习委员", "学院", "教务", "就业中心", "管理员")
 }

@@ -6,6 +6,7 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import com.attentionguard.app.capture.HistoryRange
 import java.util.concurrent.atomic.AtomicLong
+import org.json.JSONArray
 
 /** Align neighboring visible screens. Repeated text is not a global message ID. */
 object ScreenOverlap {
@@ -33,7 +34,7 @@ data class ArchiveWrite(val added: Int, val gap: Boolean)
 data class ArchiveReview(val duplicateCount: Int, val uncertainCount: Int)
 
 /** App-private SQLite archive. It is independent of event selection and cloud calls. */
-class MessageArchive(context: Context) : SQLiteOpenHelper(context.applicationContext, "message_archive.db", null, 1) {
+class MessageArchive(context: Context) : SQLiteOpenHelper(context.applicationContext, "message_archive.db", null, 2) {
     private data class Seen(val message: Msg, val id: Long?)
     private var screenEpoch = EPOCH.get()
     private val screens = object : LinkedHashMap<String, List<Seen>>(16, .75f, true) {
@@ -43,8 +44,24 @@ class MessageArchive(context: Context) : SQLiteOpenHelper(context.applicationCon
         db.execSQL("CREATE TABLE messages (_id INTEGER PRIMARY KEY AUTOINCREMENT, stream TEXT NOT NULL, group_title TEXT NOT NULL, body TEXT NOT NULL, side TEXT NOT NULL, sender TEXT, day TEXT, time_label TEXT, kind TEXT NOT NULL, capture_method TEXT NOT NULL, captured_at INTEGER NOT NULL)")
         db.execSQL("CREATE INDEX messages_stream_day ON messages(stream,day)")
         db.execSQL("CREATE INDEX messages_group ON messages(group_title,_id)")
+        createCheckpoints(db)
     }
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 2) createCheckpoints(db)
+    }
+    private fun createCheckpoints(db: SQLiteDatabase) = db.execSQL(
+        "CREATE TABLE screen_checkpoints (stream TEXT PRIMARY KEY, signature TEXT NOT NULL, ids TEXT NOT NULL, captured_at INTEGER NOT NULL)")
+
+    // Only an exact, recent viewport replay survives service reconnection. This
+    // is not a global text identity and must not erase later repeated notices.
+    private fun replay(db: SQLiteDatabase, stream: String, snapshot: ChatSnapshot): List<Seen> =
+        db.query("screen_checkpoints", null, "stream=?", arrayOf(stream), null, null, null).use { c ->
+            if (!c.moveToFirst() || c.getString(c.getColumnIndexOrThrow("signature")) != snapshot.signature() ||
+                snapshot.capturedAt - c.getLong(c.getColumnIndexOrThrow("captured_at")) !in 0..120_000) return@use emptyList()
+            val ids = JSONArray(c.getString(c.getColumnIndexOrThrow("ids")))
+            if (ids.length() != snapshot.messages.size) return@use emptyList()
+            snapshot.messages.mapIndexed { i, message -> Seen(message, if (ids.isNull(i)) null else ids.getLong(i)) }
+        }
 
     fun append(snapshot: ChatSnapshot, stream: String, range: HistoryRange? = null,
                canWrite: () -> Boolean = { true }): ArchiveWrite = synchronized(WRITE_LOCK) {
@@ -52,9 +69,9 @@ class MessageArchive(context: Context) : SQLiteOpenHelper(context.applicationCon
         if (!canWrite()) return@synchronized ArchiveWrite(0, false)
         if (screenEpoch != EPOCH.get()) { screens.clear(); screenEpoch = EPOCH.get() }
         val title = requireNotNull(snapshot.title).also { require(it.isNotBlank()) }
-        val previous = screens[stream].orEmpty()
-        val matches = ScreenOverlap.match(previous.map { it.message }, snapshot.messages)
         val db = writableDatabase
+        val previous = screens[stream] ?: replay(db, stream, snapshot)
+        val matches = ScreenOverlap.match(previous.map { it.message }, snapshot.messages)
         val next = ArrayList<Seen>()
         var added = 0
         db.beginTransaction()
@@ -79,6 +96,12 @@ class MessageArchive(context: Context) : SQLiteOpenHelper(context.applicationCon
                 }
                 next.add(Seen(message, id))
             }
+            if (!canWrite()) return@synchronized ArchiveWrite(0, false)
+            val ids = JSONArray().apply { next.forEach { put(it.id ?: org.json.JSONObject.NULL) } }
+            db.insertWithOnConflict("screen_checkpoints", null, ContentValues().apply {
+                put("stream", stream); put("signature", snapshot.signature()); put("ids", ids.toString()); put("captured_at", snapshot.capturedAt)
+            }, SQLiteDatabase.CONFLICT_REPLACE)
+            db.execSQL("DELETE FROM screen_checkpoints WHERE stream NOT IN (SELECT stream FROM screen_checkpoints ORDER BY captured_at DESC LIMIT 16)")
             db.setTransactionSuccessful()
         } finally { db.endTransaction() }
         screens[stream] = next
@@ -86,15 +109,18 @@ class MessageArchive(context: Context) : SQLiteOpenHelper(context.applicationCon
     }
 
     /** Cross-screen duplicate check for callers that need an audit signal. */
-    fun review(stream: String): ArchiveReview = synchronized(WRITE_LOCK) {
+    fun review(stream: String? = null): ArchiveReview = synchronized(WRITE_LOCK) {
+        val where = if (stream == null) "" else " WHERE stream=?"
+        val args = stream?.let { arrayOf(it) } ?: emptyArray()
         val cursor = readableDatabase.rawQuery(
-            "SELECT body, side, sender, day, time_label, COUNT(*) c FROM messages WHERE stream=? GROUP BY body, side, sender, day, time_label HAVING c > 1",
-            arrayOf(stream)
+            "SELECT body, side, sender, day, time_label, COUNT(*) c FROM messages$where GROUP BY body, side, sender, day, time_label HAVING c > 1",
+            args
         )
         var duplicates = 0
         cursor.use { while (it.moveToNext()) duplicates += (it.getInt(5) - 1).coerceAtLeast(0) }
+        val uncertainWhere = if (stream == null) " WHERE day IS NULL" else " WHERE stream=? AND day IS NULL"
         val uncertain = readableDatabase.rawQuery(
-            "SELECT COUNT(*) FROM messages WHERE stream=? AND day IS NULL", arrayOf(stream)
+            "SELECT COUNT(*) FROM messages$uncertainWhere", args
         ).use { if (it.moveToFirst()) it.getInt(0) else 0 }
         return ArchiveReview(duplicates, uncertain)
     }
@@ -122,7 +148,14 @@ class MessageArchive(context: Context) : SQLiteOpenHelper(context.applicationCon
     }
 
     fun clear() = synchronized(WRITE_LOCK) {
-        writableDatabase.delete("messages", null, null); screens.clear(); screenEpoch = EPOCH.incrementAndGet()
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            db.delete("messages", null, null)
+            db.delete("screen_checkpoints", null, null)
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
+        screens.clear(); screenEpoch = EPOCH.incrementAndGet()
     }
     companion object {
         private val EPOCH = AtomicLong()

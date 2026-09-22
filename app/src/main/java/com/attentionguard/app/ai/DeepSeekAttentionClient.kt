@@ -64,18 +64,25 @@ class DeepSeekAttentionClient internal constructor(
             put("messages", messages)
         }
         val result = postJson(system, user.toString())
+        val proposed = priorityOf(clean(result.optString("priority")), base.priority)
+        val priority = if (proposed.ordinal < base.priority.ordinal) base.priority else proposed
+        val proposedDue = clean(result.getString("due_label")).takeIf { it.isNotBlank() }
         return base.copy(
             analysisSource = "DeepSeek",
             title = clean(result.optString("title")).ifBlank { base.title },
             summary = clean(result.optString("summary")).ifBlank { base.summary },
             category = categoryOf(clean(result.optString("category")), base.category),
-            priority = priorityOf(clean(result.optString("priority")), base.priority),
-            status = statusOf(clean(result.optString("status")), base.status),
+            priority = priority,
+            status = if (base.priority == EventPriority.P3) base.status else statusOf(clean(result.optString("status")), base.status),
             attentionScore = result.optInt("attention_score", base.attentionScore).coerceIn(1, 99),
-            dueLabel = clean(result.getString("due_label")).takeIf { it.isNotBlank() },
-            actionLabel = clean(result.getString("action_label")).takeIf { it.isNotBlank() },
+            dueLabel = if (proposedDue == null) null else base.dueLabel,
+            actionLabel = if (base.priority == EventPriority.P3) base.actionLabel else clean(result.getString("action_label")).takeIf { it.isNotBlank() },
             consequence = clean(result.getString("consequence")).takeIf { it.isNotBlank() },
-            sourcePerson = clean(result.optString("source_person")).ifBlank { base.sourcePerson }
+            sourcePerson = clean(result.optString("source_person")).ifBlank { base.sourcePerson },
+            reviewNotes = base.reviewNotes + buildList {
+                if (priority != proposed) add("模型建议升级，但本地证据门槛未满足，保留本地等级")
+                if (proposedDue != null && proposedDue != base.dueLabel) add("模型时间未替换原始消息的本地日期校验结果")
+            }
         )
     }
 

@@ -34,6 +34,7 @@ class GuardUi(val context: Context) {
     val surface = color(R.color.ag_surface)
     val background = color(R.color.ag_background)
     val line = color(R.color.ag_border)
+    val info = color(R.color.ag_info)
     fun color(id: Int) = ContextCompat.getColor(context, id)
     fun dp(value: Int) = (value * context.resources.displayMetrics.density).roundToInt()
     fun column() = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
@@ -95,6 +96,8 @@ class GuardUi(val context: Context) {
             minimumHeight = dp(48)
             insetTop = 0
             insetBottom = 0
+            stateListAnimator = null
+            elevation = 0f
             cornerRadius = dp(8)
             backgroundTintList = ColorStateList.valueOf(if (primary) brand else surface)
             setTextColor(if (primary) surface else brand)
@@ -107,6 +110,67 @@ class GuardUi(val context: Context) {
             layoutParams = lp()
             setOnClickListener { action() }
         }
+
+    fun navigationRow(iconRes: Int, title: String, subtitle: String, action: () -> Unit): View = row().apply {
+        minimumHeight = dp(76)
+        setPadding(dp(4), dp(14), dp(4), dp(14))
+        addView(icon(iconRes, brand))
+        addView(column().apply {
+            setPadding(dp(14), 0, dp(12), 0)
+            addView(text(title, bold = true))
+            addView(text(subtitle, R.dimen.ag_type_label, sub).apply { layoutParams = lp(5) })
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        addView(icon(R.drawable.ag_chevron_right, size = 18))
+        accessibleAction(this, "$title，$subtitle", action)
+    }
+
+    /** A non-interactive two-column status line used for live diagnostics. */
+    fun statusRow(label: String, value: String, tint: Int = sub, iconRes: Int? = null): View = row().apply {
+        minimumHeight = dp(56)
+        setPadding(dp(12), dp(9), dp(12), dp(9))
+        background = shape(surface, line, 8)
+        iconRes?.let { addView(icon(it, tint, 20), LinearLayout.LayoutParams(dp(28), dp(24))) }
+        addView(text(label, R.dimen.ag_type_label, sub, true), LinearLayout.LayoutParams(0, -2, 1f))
+        addView(text(value, R.dimen.ag_type_label, tint, true).apply {
+            gravity = Gravity.END
+            maxLines = 2
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+    }
+
+    /** A compact explanation block for local rules and data-quality caveats. */
+    fun callout(title: String, detail: String, tint: Int = brand, fill: Int = color(R.color.ag_brand_soft), iconRes: Int = R.drawable.ag_shield_check): View = column().apply {
+        background = shape(fill, tint, 8)
+        setPadding(dp(12), dp(11), dp(12), dp(11))
+        addView(row().apply {
+            addView(icon(iconRes, tint, 18))
+            addView(text(title, R.dimen.ag_type_label, tint, true).apply { setPadding(dp(8), 0, 0, 0) })
+        })
+        addView(text(detail, R.dimen.ag_type_caption, sub).apply {
+            layoutParams = lp(7)
+            setPadding(dp(26), 0, 0, 0)
+        })
+    }
+
+    fun metric(value: Int, label: String, tint: Int, action: () -> Unit): View = column().apply {
+        setPadding(dp(12), dp(12), dp(8), dp(12))
+        addView(text(value.toString(), R.dimen.ag_type_title, tint, true))
+        addView(text(label, R.dimen.ag_type_label, sub).apply { layoutParams = lp(6) })
+        accessibleAction(this, "$label，$value 个，查看列表", action)
+    }
+
+    private fun accessibleAction(view: ViewGroup, label: String, action: () -> Unit) {
+        selectable(view, android.graphics.Color.TRANSPARENT, null)
+        view.contentDescription = label
+        for (i in 0 until view.childCount) view.getChildAt(i).importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+        view.accessibilityDelegate = object : View.AccessibilityDelegate() {
+            override fun onInitializeAccessibilityNodeInfo(host: View, info: android.view.accessibility.AccessibilityNodeInfo) {
+                super.onInitializeAccessibilityNodeInfo(host, info)
+                info.className = "android.widget.Button"
+            }
+        }
+        view.setOnClickListener { action() }
+    }
 
     fun badge(label: String, foreground: Int = brand, fill: Int = color(R.color.ag_brand_soft)) =
         text(label, R.dimen.ag_type_caption, foreground, true).apply {

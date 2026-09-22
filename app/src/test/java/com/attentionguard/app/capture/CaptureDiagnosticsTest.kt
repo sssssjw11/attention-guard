@@ -19,10 +19,24 @@ class CaptureDiagnosticsTest {
         assertTrue(result.contains("挂窗失败：BadTokenException"))
     }
     @Test fun aStaleHeartbeatCannotClaimTheServiceIsConnected() {
+        CaptureRuntime.actions = object : CaptureActions {
+            override fun armHistory(config: HistoryConfig) = false
+            override fun pauseHistory() = Unit
+            override fun cancelHistory() = Unit
+        }
+        try {
+            diagnostics.heartbeat(true)
+            assertTrue(diagnostics.summary().contains("服务：已连接"))
+            assertTrue(diagnostics.summary(System.currentTimeMillis() + 11_000).contains("心跳过期"))
+            diagnostics.heartbeat(false)
+            assertTrue(diagnostics.summary().contains("未连接"))
+        } finally { CaptureRuntime.actions = null }
+    }
+    @Test fun permissionAndPersistedHeartbeatDoNotProveALiveConnection() {
+        CaptureRuntime.actions = null
         diagnostics.heartbeat(true)
-        assertTrue(diagnostics.summary().contains("服务：已连接"))
-        assertTrue(diagnostics.summary(System.currentTimeMillis() + 11_000).contains("心跳过期"))
-        diagnostics.heartbeat(false)
-        assertTrue(diagnostics.summary().contains("未连接"))
+        assertTrue(diagnostics.healthLabel(true, true).contains("需要恢复"))
+        assertEquals("观测已暂停", diagnostics.healthLabel(false, true))
+        assertEquals("未授权采集", diagnostics.healthLabel(true, false))
     }
 }

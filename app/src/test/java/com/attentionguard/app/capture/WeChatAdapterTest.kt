@@ -179,4 +179,11 @@ class WeChatAdapterTest {
         val changed = old.copy(messages = listOf(com.attentionguard.app.core.Msg("other", "new first")) + old.messages.drop(1))
         assertNotEquals(old.signature(), changed.signature())
     }
+
+    @Test fun clippedLongBubbleDoesNotInvalidateToolbarTitle() {
+        val root = node()
+        child(root, node("Synthetic group", Rect(100, 35, 250, 62)))
+        child(root, node("Long visible message", Rect(30, -100, 300, 420), "com.tencent.mm:id/bkl"))
+        assertEquals("Synthetic group", adapter.inspect(root, resources).snapshot!!.title)
+    }
 }

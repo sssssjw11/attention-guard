@@ -76,6 +76,15 @@ class DeepSeekAttentionClientTest {
         assertNull(enriched.consequence)
     }
 
+    @Test fun modelCannotPromoteWeakEvidenceOrInjectDeadline() {
+        val weak = base.copy(priority = EventPriority.P2, dueLabel = null)
+        val proposed = eventJson().put("priority", "P0").put("due_label", "39/30 12:00")
+        val enriched = client(FakeConnection(response(proposed.toString()))).enrich(snapshot, weak, "")
+        assertEquals(EventPriority.P2, enriched.priority)
+        assertNull(enriched.dueLabel)
+        assertTrue(enriched.reviewNotes.any { it.contains("未满足") })
+    }
+
     @Test fun rejectsMissingChoicesAndNonStringContent() {
         listOf("{}", "{\"choices\":[]}", response(JSONObject()), response("")).forEach { assertInvalid(it) }
     }
