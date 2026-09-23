@@ -70,8 +70,8 @@ changes, and a quiet event ledger.
 - **Audience and primary job:** Students and staff who need to keep up with visible
   campus group-chat notices without reading every message as an interruption.
 - **Target market and evidence:** Mainland China Android usage is the current
-  delivery target because the first adapter is WeChat. The product contract is
-  platform-neutral and does not depend on a chat provider API.
+  delivery target. The only supported chat surface is visible WeChat content;
+  the app does not depend on a chat provider API.
 - **Locale and language policy:** `zh-CN` is the product language for this release.
   Dates use the device locale and timezone. English is reserved for the brand name,
   endpoint names, and technical model identifiers.
@@ -131,8 +131,8 @@ layers, or decorative shadows are used on the main pages.
 
 The default radius is 8dp for fields, buttons, cards, and the overlay. Badges use a
 4dp radius to read as labels rather than pills. Dividers are 1dp in `#DCE3E0`.
-Icon buttons are square 48dp touch targets with a transparent ripple. Cards are
-clickable as a whole and expose a single accessible action name.
+Icon buttons are square 48dp touch targets with a transparent ripple. Event
+cards separate the detail target from completion and archive icon actions.
 
 ## Components
 
@@ -159,7 +159,8 @@ and tooltip.
 ### Navigation and data display
 
 The four destinations are **注意力**, **观测簿**, **来源**, and **我的**. Event rows
-show priority, status, title, due time, and source group in that order. The detail
+show priority, status, title, due time, and capture origin before the source group.
+The ledger has a horizontally scrollable archived filter. The detail
 screen adds the timeline, action, consequence, and an explicitly expandable
 original-evidence section. Sources list only groups that have produced a real or
 currently selected demo event.
@@ -183,8 +184,9 @@ The overlay shows the actual conversation name and a text state with pause/stop
 controls; it never suggests that all history was recovered. Message rows separate
 source, day confidence and raw text; OCR results carry a verification label.
 Progress counts observed pages and reports gaps rather than inventing a percent.
-The collapsed overlay is a 152dp by 56dp toolbar with three 48dp controls: move,
-history/pause/resume, expand. History pause remains reachable when collapsed.
+The collapsed overlay is a 200dp by 56dp toolbar with four 48dp controls: move,
+manual recognition, history/pause/resume, expand. History pause remains reachable
+when collapsed, and a manual intent result expands the card automatically.
 Only the background opacity is adjustable (96-100%); text and icons stay opaque.
 Changing state updates the existing window instead of removing and remounting it.
 

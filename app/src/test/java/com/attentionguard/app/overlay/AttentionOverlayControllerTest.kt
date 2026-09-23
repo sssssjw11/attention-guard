@@ -7,6 +7,7 @@ import android.view.WindowManager
 import com.google.android.material.button.MaterialButton
 import com.attentionguard.app.MainActivity
 import com.attentionguard.app.core.DemoAttentionData
+import com.attentionguard.app.core.IntentInsight
 import com.attentionguard.app.core.Prefs
 import com.attentionguard.app.capture.*
 import java.time.LocalDate
@@ -93,13 +94,27 @@ class AttentionOverlayControllerTest {
         ShadowSettings.setCanDrawOverlays(true)
         prefs.overlayCollapsed = true
         var opened = false
+        var recognized = false
         overlay.onHistorySettings = { opened = true }
+        overlay.onManualAnalyze = { recognized = true }
         overlay.showIdle("Test group")
         assertTrue(overlay.isShowing())
+        descendants(windows.views.single()).first { it.contentDescription == "识别当前微信聊天" }.performClick()
+        assertTrue(recognized)
         descendants(windows.views.single()).first { it.contentDescription == "回溯收集" }.performClick()
         assertTrue(opened)
         descendants(windows.views.single()).first { it.contentDescription == "展开 Attention Guard" }.performClick()
         assertFalse(prefs.overlayCollapsed)
+    }
+
+    @Test fun manualIntentOpensExpandedResultFromCollapsedBubble() {
+        ShadowSettings.setCanDrawOverlays(true)
+        prefs.overlayCollapsed = true
+        overlay.showIdle("课程群")
+        overlay.showIntent(IntentInsight("可能在提出行动请求", "核对期限", "请提交作业", "同学", "课程群", 1_700_000_000_000L))
+        assertFalse(prefs.overlayCollapsed)
+        assertTrue(descendants(windows.views.single()).filterIsInstance<android.widget.TextView>()
+            .any { it.text.toString().contains("请提交作业") })
     }
 
     @Test fun compactControlsFitAndPauseIsAlwaysReachable() {
@@ -115,10 +130,10 @@ class AttentionOverlayControllerTest {
         val width = (view.layoutParams as WindowManager.LayoutParams).width
         view.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(800, View.MeasureSpec.AT_MOST))
         view.layout(0, 0, view.measuredWidth, view.measuredHeight)
-        assertEquals(152, view.measuredWidth)
+        assertEquals(200, view.measuredWidth)
         assertEquals(56, view.measuredHeight)
         val actions = descendants(view).filter { it.isClickable }.toList()
-        assertEquals(3, actions.size)
+        assertEquals(4, actions.size)
         assertTrue(actions.all { it.width >= 48 && it.height >= 48 && it.right <= width })
         actions.first { it.contentDescription == "暂停回溯" }.performClick()
         assertTrue(paused)

@@ -9,8 +9,8 @@ import android.text.InputType
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import androidx.activity.OnBackPressedCallback
@@ -183,9 +183,10 @@ class MainActivity : AppCompatActivity() {
         body.addView(actionRow(R.drawable.ag_radio, status, if (prefs.cloudEnabled && prefs.hasKey()) "DeepSeek 增强已启用" else "本地整理", false) {
             switchTab(R.id.ag_profile)
         }.apply { layoutParams = ui.lp(16) })
-        val pending = events.count { it.needsAction() }
-        val following = events.count { !it.needsAction() && it.status != EventStatus.COMPLETED }
-        val done = events.count { it.status == EventStatus.COMPLETED }
+        val stats = attentionStatsFrom(events)
+        val pending = stats.actionRequired
+        val following = stats.observed - stats.actionRequired - stats.completed
+        val done = stats.completed
         body.addView(ui.row().apply {
             setPadding(0, ui.dp(20), 0, ui.dp(4))
             listOf(Triple(pending, "待处理", EventFilter.ACTION), Triple(following, "关注中", EventFilter.FOLLOWING), Triple(done, "已完成", EventFilter.COMPLETED)).forEach { item ->
@@ -194,8 +195,14 @@ class MainActivity : AppCompatActivity() {
                 }, LinearLayout.LayoutParams(0, -2, 1f))
             }
         })
-        if (events.isEmpty()) {
-            empty("记录本还是空的", "尚未发现需要保留的事项", true)
+        if (events.none { !it.archived }) {
+            if (events.isEmpty()) empty("记录本还是空的", "尚未发现需要保留的事项", true)
+            else {
+                empty("当前事件已处理", "${events.size} 个事件在归档中", false)
+                body.addView(ui.button("查看归档", R.drawable.ag_archive, false) {
+                    filter = EventFilter.ARCHIVED; switchTab(R.id.ag_ledger)
+                }.apply { layoutParams = ui.lp(12) })
+            }
             return
         }
         body.addView(ui.heading("优先处理"))
@@ -211,7 +218,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun ledger() {
-        title("观测簿", "${events.size} 个事件")
+        title("观测簿", "${events.count { !it.archived }} 个当前事件 · ${events.count { it.archived }} 个归档")
         val (searchBox, search) = ui.field("搜索事件或群名", query, InputType.TYPE_CLASS_TEXT, R.id.ag_search)
         search.setSingleLine()
         searchBox.startIconDrawable = androidx.core.content.ContextCompat.getDrawable(this, R.drawable.ag_search)
@@ -221,7 +228,6 @@ class MainActivity : AppCompatActivity() {
         val segmented = MaterialButtonToggleGroup(this).apply {
             isSingleSelection = true
             isSelectionRequired = true
-            layoutParams = ui.lp(16)
         }
         EventFilter.values().forEach { value ->
             segmented.addView(ui.button(value.label, primary = filter == value) {}.apply {
@@ -230,10 +236,14 @@ class MainActivity : AppCompatActivity() {
                 minimumWidth = 0
                 setPadding(ui.dp(3), ui.dp(8), ui.dp(3), ui.dp(8))
                 textSize = 12f
-            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            }, LinearLayout.LayoutParams(ui.dp(80), ViewGroup.LayoutParams.WRAP_CONTENT))
         }
         segmented.check(500 + filter.ordinal)
-        body.addView(segmented)
+        body.addView(HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            addView(segmented)
+            layoutParams = ui.lp(16)
+        })
         val list = ui.column()
         body.addView(list)
         fun refresh() {
@@ -279,7 +289,7 @@ class MainActivity : AppCompatActivity() {
         val content = ui.column().apply { setPadding(ui.dp(16), ui.dp(16), ui.dp(16), ui.dp(16)) }
         content.addView(ui.row().apply {
             addView(ui.badge(event.priority.label, tone, tint))
-            addView(ui.text(event.status.label, R.dimen.ag_type_caption, ui.sub).apply {
+            addView(ui.text(if (event.archived) "已归档" else event.status.label, R.dimen.ag_type_caption, ui.sub).apply {
                 setPadding(ui.dp(8), 0, ui.dp(8), 0)
             }, LinearLayout.LayoutParams(0, -2, 1f))
             addView(ui.icon(R.drawable.ag_chevron_right, size = 18))
@@ -289,31 +299,59 @@ class MainActivity : AppCompatActivity() {
         DeadlineParser.displayLabel(event.dueLabel)?.let { due ->
             content.addView(ui.text(due, R.dimen.ag_type_label, tone, true).apply { layoutParams = ui.lp(12) })
         }
-        content.addView(ui.text(event.sourceGroup, R.dimen.ag_type_caption, ui.sub).apply { layoutParams = ui.lp(8) })
+        content.addView(ui.text("${if (prefs.demoMode) "示例数据" else event.captureOrigin.label} · ${event.sourceGroup}", R.dimen.ag_type_caption, ui.sub).apply {
+            layoutParams = ui.lp(8); maxLines = 2
+        })
+        ui.accessibleAction(content,
+            listOfNotNull(event.title, event.priority.label, if (event.archived) "已归档" else event.status.label,
+                event.dueLabel, event.sourceGroup, "查看详情").joinToString("，")) {
+            positions[tab] = scroll.scrollY
+            detailId = event.id; evidenceOpen = false; render(true)
+        }
         return MaterialCardView(this).apply {
             radius = ui.dp(8).toFloat()
             cardElevation = 0f
             strokeWidth = ui.dp(1)
             strokeColor = if (featured) tone else ui.line
             setCardBackgroundColor(ui.surface)
-            rippleColor = ColorStateList.valueOf(ui.color(R.color.ag_ripple))
-            addView(content)
+            addView(ui.row().apply {
+                addView(content, LinearLayout.LayoutParams(0, -2, 1f))
+                addView(ui.column().apply {
+                    addView(ui.iconButton(if (event.status == EventStatus.COMPLETED) R.drawable.ag_undo_2 else R.drawable.ag_check,
+                        "${if (event.status == EventStatus.COMPLETED) "恢复" else "标记完成"}：${event.title}") { toggleCompleted(event) })
+                    addView(ui.iconButton(if (event.archived) R.drawable.ag_undo_2 else R.drawable.ag_archive,
+                        "${if (event.archived) "移出归档" else "归档"}：${event.title}") { toggleArchived(event) })
+                })
+            })
             layoutParams = ui.lp(12)
-            isClickable = true
-            isFocusable = true
-            contentDescription = listOfNotNull(event.title, event.priority.label, event.status.label, event.dueLabel, event.sourceGroup, "查看详情").joinToString("，")
-            content.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
-            accessibilityDelegate = object : View.AccessibilityDelegate() {
-                override fun onInitializeAccessibilityNodeInfo(host: View, info: AccessibilityNodeInfo) {
-                    super.onInitializeAccessibilityNodeInfo(host, info)
-                    info.className = "android.widget.Button"
-                }
-            }
-            setOnClickListener {
-                positions[tab] = scroll.scrollY
-                detailId = event.id; evidenceOpen = false; render(true)
-            }
         }
+    }
+
+    private fun updateEvent(event: AttentionEvent, updated: AttentionEvent, persist: () -> List<AttentionEvent>, message: String,
+                            acknowledge: Boolean = false) {
+        runCatching {
+            if (prefs.demoMode) {
+                demoEvents = demoEvents.map { if (it.id == event.id) updated else it }
+                events = demoEvents
+            } else events = persist()
+        }.onSuccess {
+            if (detailId == null) positions[tab] = scroll.scrollY
+            render()
+            if (acknowledge && detailId != null) GuardMotion.acknowledge(shell.getChildAt(shell.childCount - 1))
+            ui.feedback(shell, message)
+        }.onFailure { ui.feedback(shell, "保存失败，原记录未修改") }
+    }
+
+    private fun toggleCompleted(event: AttentionEvent) {
+        val complete = event.status != EventStatus.COMPLETED
+        updateEvent(event, event.withCompletion(complete), { store.setCompleted(event.id, complete) },
+            if (complete) "已标记完成" else "已恢复原状态", acknowledge = true)
+    }
+
+    private fun toggleArchived(event: AttentionEvent) {
+        val archive = !event.archived
+        updateEvent(event, event.withArchive(archive), { store.setArchived(event.id, archive) },
+            if (archive) "已归档，可在归档中恢复" else "已移出归档")
     }
 
     private fun renderDetail(event: AttentionEvent) {
@@ -324,7 +362,7 @@ class MainActivity : AppCompatActivity() {
         body.addView(ui.row().apply {
             layoutParams = ui.lp(16)
             addView(ui.badge(event.priority.label, tone, tint))
-            addView(ui.text(event.status.label, tint = ui.brand).apply { setPadding(ui.dp(12), 0, 0, 0) })
+            addView(ui.text(if (event.archived) "已归档 · ${event.status.label}" else event.status.label, tint = ui.brand).apply { setPadding(ui.dp(12), 0, 0, 0) })
         })
         body.addView(ui.heading("判定摘要"))
         body.addView(ui.callout(
@@ -345,6 +383,12 @@ class MainActivity : AppCompatActivity() {
         body.addView(ui.heading("来源"))
         body.addView(ui.text(event.sourceGroup).apply { layoutParams = ui.lp(10) })
         body.addView(ui.text("${event.sourcePerson} · ${event.updatedLabel}", R.dimen.ag_type_label, ui.sub).apply { layoutParams = ui.lp(6) })
+        body.addView(ui.text(if (prefs.demoMode) "示例数据" else event.captureOrigin.label,
+            R.dimen.ag_type_label, ui.sub).apply { layoutParams = ui.lp(6) })
+        event.sourceCapturedAt?.let { captured ->
+            body.addView(ui.text("采集于 ${SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.SIMPLIFIED_CHINESE).format(Date(captured))}",
+                R.dimen.ag_type_caption, ui.sub).apply { layoutParams = ui.lp(6) })
+        }
         body.addView(ui.heading("事件记录"))
         event.updates.forEach { update ->
             body.addView(ui.row().apply {
@@ -369,17 +413,13 @@ class MainActivity : AppCompatActivity() {
         shell.addView(ui.column().apply {
             setPadding(ui.dp(20), ui.dp(12), ui.dp(20), ui.dp(12))
             setBackgroundColor(ui.surface)
-            addView(ui.button(if (complete) "恢复原状态" else "标记完成", if (complete) R.drawable.ag_undo_2 else R.drawable.ag_check) {
-                runCatching {
-                    if (prefs.demoMode) {
-                        demoEvents = demoEvents.map { if (it.id == event.id) it.withCompletion(!complete) else it }
-                        events = demoEvents
-                    } else events = store.setCompleted(event.id, !complete)
-                }.onSuccess {
-                    render()
-                    GuardMotion.acknowledge(shell.getChildAt(shell.childCount - 1))
-                    ui.feedback(shell, if (complete) "已恢复原状态" else "已标记完成")
-                }.onFailure { ui.feedback(shell, "保存失败，原记录未修改") }
+            addView(ui.row().apply {
+                addView(ui.button(if (complete) "恢复原状态" else "标记完成", if (complete) R.drawable.ag_undo_2 else R.drawable.ag_check) {
+                    toggleCompleted(event)
+                }, LinearLayout.LayoutParams(0, -2, 1f))
+                addView(ui.button(if (event.archived) "移出归档" else "归档", if (event.archived) R.drawable.ag_undo_2 else R.drawable.ag_archive, false) {
+                    toggleArchived(event)
+                }, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = ui.dp(8) })
             })
         })
     }
@@ -397,8 +437,8 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(this, CaptureActivity::class.java))
         })
         body.addView(actionRow(R.drawable.ag_sliders_horizontal, "会话范围", if (prefs.whitelist.isEmpty()) "所有当前会话" else "${prefs.whitelist.size} 个关键词", false) { settings() }.apply { layoutParams = ui.lp(20) })
-        body.addView(ui.heading("已产生事件的群聊"))
-        val groups = events.groupBy { it.sourceGroup }
+        body.addView(ui.heading("当前事件来源"))
+        val groups = events.filterNot { it.archived }.groupBy { it.sourceGroup }
         if (groups.isEmpty()) body.addView(ui.text("暂无来源", tint = ui.sub).apply { layoutParams = ui.lp(20) })
         groups.forEach { (name, items) ->
             body.addView(actionRow(R.drawable.ag_messages_square, name, "${items.size} 个事件 · ${items.count { it.needsAction() }} 个待处理") {

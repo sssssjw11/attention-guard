@@ -14,7 +14,7 @@ activities, `MessageArchive`, and `HistorySession`.
 | Form | `GuardUi.field` + settings explicit-save + capture explicit-prepare | `DESIGN.md` and settings section below | DeepSeek save; history prepare then in-chat confirmation; OCR consent | ActivityFlow/CaptureActivity tests + lint |
 | Scrollbar | Android `ScrollView` platform owner | `GuardUi.scroll` and system theme | One vertical scroll surface per page | Build/lint + manual device check |
 | Toast | `GuardUi.feedback` Snackbar and overlay Toast | Shared feedback wording below | Snackbar in app, Toast over other apps | Unit/message review + manual device check |
-| CRUD | `EventStore` and `MessageArchive` | Separate event and raw-message lifecycles | Events complete/restore; raw messages paginate/clear with confirmation | EventStore/MessageArchive/Activity tests |
+| CRUD | `EventStore` and `MessageArchive` | Separate event and raw-message lifecycles | Events complete/restore and archive/unarchive; raw messages paginate/clear with confirmation | EventStore/MessageArchive/Activity tests |
 
 ## Surface ownership
 
@@ -23,7 +23,8 @@ activities, `MessageArchive`, and `HistorySession`.
 - `SettingsActivity` owns DeepSeek-only configuration and explicit save/cancel.
 - `CaptureActivity` owns diagnosis, raw-message paging, local OCR opt-in, and history preparation.
 - `AttentionOverlayController` owns the read-only cross-app card. It may open the
-  app, expand a stored event, reset its position, or hide itself. It also confirms,
+  app, expand a stored event, manually recognize the current WeChat chat, reset
+  its position, or hide itself. It also confirms,
   pauses and cancels an explicitly prepared history session; dismiss pauses it.
 - `EventStore` is the only owner of persisted event JSON. `MainActivity` never
   writes event JSON directly.
@@ -37,10 +38,27 @@ activities, `MessageArchive`, and `HistorySession`.
    user has enabled cloud enhancement and a usable encrypted key exists.
 3. The resulting event is merged by stable ID and stored locally with a bounded
    timeline and original evidence.
-4. The user can open detail, expand evidence, mark complete, or restore the prior
-   status. Completion never invents a new status.
+4. The user can open detail, expand evidence, mark complete, restore the prior
+   status, archive, or unarchive. Archive is a reversible flag independent of
+   completion; archived items leave active filters and counters.
 5. A failed DeepSeek request keeps the local event and shows a degraded-mode notice.
    A failed local read or save never overwrites the previous record.
+- Each event records its latest capture origin (WeChat automatic/manual), capture
+  time, conversation, sender and original evidence. Old records with no origin
+  field display an unverified-source label rather than a fabricated origin.
+
+## Manual Intent Recognition
+
+- The collapsed and expanded WeChat overlay can request a fresh read of the
+  current foreground conversation. The result opens expanded and shows the
+  latest visible incoming text, possible intent, next step, sender, capture time,
+  and local-rule provenance. It never writes or sends a reply.
+- The Jev-inspired intent reading is local heuristic guidance, not a call to an
+  online Jev model or a verified psychological conclusion. It does not run on
+  unconfirmed conversation text, OCR text, or during a history session.
+- A separately gated actionable event may be saved with manual origin. Manual
+  recognition does not require auto-analysis or invoke DeepSeek. A save failure
+  leaves the intent clue visible but never claims the related event was stored.
 
 ## Navigation and state
 
@@ -176,7 +194,8 @@ DeepSeek or used for automatic event creation. No geometry evidence means no OCR
 
 - All interactive targets are at least 48dp and icon-only controls have Chinese
   content descriptions.
-- Event rows expose one semantic action instead of exposing decorative child text.
+- Event rows expose three independent semantic actions: detail, complete/restore,
+  and archive/unarchive. Decorative child text is hidden from accessibility.
 - Important result/status text uses a polite live region where it changes in place.
 - System bars, display cutouts, and the IME are applied through window insets.
 - `zh-CN` is the release locale; the brand and API model names stay unchanged.

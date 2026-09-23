@@ -8,11 +8,6 @@ import com.attentionguard.app.core.MessageType
 import com.attentionguard.app.core.Msg
 import kotlin.math.abs
 
-interface ChatAppAdapter {
-    val pkg: String
-    fun extract(root: AccessibilityNodeInfo, res: Resources): ChatSnapshot?
-}
-
 data class ChatInspection(
     val snapshot: ChatSnapshot?, val nodeCount: Int, val knownBubbles: Int,
     val structuralBubbles: Int, val reason: String,
@@ -23,13 +18,13 @@ data class ChatInspection(
 data class ChatOcrRegion(val bounds: Rect, val side: String, val date: String?, val timeLabel: String?)
 
 /** Accept only visible message bodies, never a whole-screen text scrape. */
-class WeChatAdapter : ChatAppAdapter {
-    override val pkg = "com.tencent.mm"
+class WeChatAdapter {
+    val pkg = "com.tencent.mm"
     private data class Entry(val node: AccessibilityNodeInfo, val bounds: Rect, val parent: Int,
                              val visible: Boolean, val blocked: Boolean)
     private data class Bubble(val index: Int, val text: String, val side: String, val sender: String?)
 
-    override fun extract(root: AccessibilityNodeInfo, res: Resources) = inspect(root, res).snapshot
+    fun extract(root: AccessibilityNodeInfo, res: Resources) = inspect(root, res).snapshot
 
     fun inspect(root: AccessibilityNodeInfo, res: Resources): ChatInspection {
         fun failure(reason: String) = ChatInspection(null, 0, 0, 0, reason)
@@ -168,36 +163,4 @@ class WeChatAdapter : ChatAppAdapter {
     }
 
     companion object { private const val BUBBLE_ID = "com.tencent.mm:id/bkl" }
-}
-
-/** Legacy adapter retained for source compatibility; the product uses WeChat only. */
-class FeishuAdapter : ChatAppAdapter {
-    override val pkg = "com.ss.android.lark"
-    override fun extract(root: AccessibilityNodeInfo, res: Resources): ChatSnapshot? {
-        val width = res.displayMetrics.widthPixels
-        val height = res.displayMetrics.heightPixels
-        var isChat = false
-        var title: String? = null
-        val items = ArrayList<Triple<Int, Int, String>>()
-        val stack = ArrayDeque<AccessibilityNodeInfo>()
-        stack.addLast(root)
-        var guard = 0
-        while (stack.isNotEmpty() && guard++ < 6000) {
-            val node = stack.removeLast()
-            val id = node.viewIdResourceName.orEmpty()
-            if (id.endsWith(":id/message") || id.endsWith(":id/bubble_content_container")) isChat = true
-            if (id.endsWith(":id/group_name") && title == null) title = node.text?.toString()
-            val text = node.text?.toString()?.trim()
-            val chrome = listOf("group_name", "name_tv", "date_tv", "system_label", "kb_rich_text_content", "thread_title_tv", "thread_subtitle_tv").any { id.endsWith(":id/$it") }
-            if (!text.isNullOrBlank() && node.className == "android.widget.TextView" && !chrome && ChatDateParser.parse(text) == null) {
-                val bounds = Rect().also { node.getBoundsInScreen(it) }
-                if (bounds.top > height * .14 && bounds.top < height * .84) items.add(Triple(bounds.top, bounds.centerX(), text))
-            }
-            for (i in node.childCount - 1 downTo 0) node.getChild(i)?.let { stack.addLast(it) }
-        }
-        if (!isChat || items.isEmpty()) return null
-        return ChatSnapshot(title, items.sortedBy { it.first }.distinct().map { (_, x, text) ->
-            Msg(if (x > width / 2) "me" else "other", text, mentions = Regex("@[^\\s:：,，。！？]+").findAll(text).map { it.value }.distinct().toList())
-        }, pkg)
-    }
 }

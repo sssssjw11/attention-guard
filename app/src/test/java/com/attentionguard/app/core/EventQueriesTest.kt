@@ -22,6 +22,20 @@ class EventQueriesTest {
         assertTrue(filterEvents(listOf(completed), EventFilter.ACTION, "").isEmpty())
         assertEquals(1, filterEvents(listOf(completed), EventFilter.COMPLETED, "").size)
     }
+    @Test fun archiveIsReversibleAndIndependentOfCompletion() {
+        val completed = events[0].withCompletion(true)
+        val archived = completed.withArchive(true)
+        assertEquals(EventStatus.COMPLETED, archived.status)
+        assertFalse(archived.needsAction())
+        assertTrue(filterEvents(listOf(archived), EventFilter.ALL, "").isEmpty())
+        assertTrue(filterEvents(listOf(archived), EventFilter.COMPLETED, "").isEmpty())
+        assertEquals(listOf(archived), filterEvents(listOf(archived), EventFilter.ARCHIVED, ""))
+        assertEquals(completed, archived.withArchive(false))
+        val stats = attentionStatsFrom(listOf(events[0], archived))
+        assertEquals(1, stats.observed)
+        assertEquals(1, stats.actionRequired)
+        assertEquals(0, stats.completed)
+    }
     @Test fun searchUsesGroupAndTitleAndTrimmedQuery() {
         assertEquals(1, filterEvents(events, EventFilter.ALL, "  双选会 ").size)
         assertEquals(1, filterEvents(events, EventFilter.ALL, "计算机网络课程群").size)

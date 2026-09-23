@@ -17,7 +17,8 @@ class EventStoreTest {
     private val store = EventStore(context)
     private val file get() = File(context.filesDir, EventStore.FILE_NAME)
     private val legacy get() = context.getSharedPreferences("attention_guard_events", Context.MODE_PRIVATE)
-    private val event = DemoAttentionData.events[2].copy(id = "test-live-event")
+    private val event = DemoAttentionData.events[2].copy(id = "test-live-event",
+        captureOrigin = CaptureOrigin.WECHAT_MANUAL, sourceCapturedAt = 1_700_000_000_000L)
 
     @Test fun freshInstallHasNoImplicitDemoRecords() {
         assertTrue(store.load().isEmpty())
@@ -43,6 +44,33 @@ class EventStoreTest {
         assertEquals(EventStatus.MONITORING, completed.previousStatus)
         assertEquals(EventStatus.MONITORING, store.setCompleted(event.id, false).single().status)
         assertNull(EventStore(context).load().single().previousStatus)
+    }
+
+    @Test fun archiveSurvivesObservationAndCanBeRestoredWithoutChangingCompletion() {
+        store.upsert(event)
+        store.setCompleted(event.id, true)
+        store.setArchived(event.id, true)
+        store.upsert(event.copy(captureOrigin = CaptureOrigin.WECHAT_AUTO))
+        val archived = EventStore(context).load().single()
+        assertTrue(archived.archived)
+        assertEquals(EventStatus.COMPLETED, archived.status)
+        assertEquals(CaptureOrigin.WECHAT_AUTO, archived.captureOrigin)
+        val restored = store.setArchived(event.id, false).single()
+        assertFalse(restored.archived)
+        assertEquals(EventStatus.COMPLETED, restored.status)
+    }
+
+    @Test fun oldRecordsWithoutOriginOrArchiveRemainReadable() {
+        store.upsert(event)
+        val old = JSONArray(file.readText()).getJSONObject(0)
+        old.remove("captureOrigin")
+        old.remove("sourceCapturedAt")
+        old.remove("archived")
+        file.writeText(JSONArray().put(old).toString())
+        val loaded = EventStore(context).load().single()
+        assertEquals(CaptureOrigin.UNKNOWN, loaded.captureOrigin)
+        assertNull(loaded.sourceCapturedAt)
+        assertFalse(loaded.archived)
     }
 
     @Test fun mergingKeepsRecentDistinctEvidenceAndUpdates() {
@@ -90,6 +118,7 @@ class EventStoreTest {
         assertTrue(store.readFailed)
         assertThrows(IllegalStateException::class.java) { store.upsert(event) }
         assertThrows(IllegalStateException::class.java) { store.setCompleted(event.id, true) }
+        assertThrows(IllegalStateException::class.java) { store.setArchived(event.id, true) }
         assertEquals("corrupt-record", file.readText())
     }
 

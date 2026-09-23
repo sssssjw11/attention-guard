@@ -18,12 +18,16 @@ import androidx.appcompat.view.ContextThemeWrapper
 import com.attentionguard.app.MainActivity
 import com.attentionguard.app.R
 import com.attentionguard.app.core.AttentionEvent
+import com.attentionguard.app.core.IntentInsight
 import com.attentionguard.app.core.Prefs
 import com.attentionguard.app.capture.CaptureDiagnostics
 import com.attentionguard.app.capture.HistoryState
 import com.attentionguard.app.capture.HistorySession
 import com.attentionguard.app.ui.GuardUi
 import kotlin.math.roundToInt
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /** Compact by default, no chat input access and no deferred window mounts. */
 class AttentionOverlayController(private val context: Context) {
@@ -32,12 +36,13 @@ class AttentionOverlayController(private val context: Context) {
     private val ui = GuardUi(ContextThemeWrapper(context, R.style.Theme_AttentionGuard))
     private var panel: LinearLayout? = null
     private var lastEvent: AttentionEvent? = null
+    private var lastInsight: IntentInsight? = null
     private var expanded = false
     private var group: String? = null
     private var loading = false
     private var usingModel = false
     private var status = ""
-    private var actionLabel = "整理当前会话"
+    private var actionLabel = "识别当前聊天"
     private var history: HistorySession? = null
     private var renderKey = ""
     private var hiddenForCapture = false
@@ -65,25 +70,34 @@ class AttentionOverlayController(private val context: Context) {
         panel?.let { runCatching { wm.removeView(it) } }
         panel = null
         renderKey = ""
+        lastInsight = null
         diagnostics.overlay("已隐藏")
     }
     fun showIdle(group: String?, status: String = "正在监测可见消息", history: HistorySession? = null,
-                 actionLabel: String = "整理当前会话") {
+                 actionLabel: String = "识别当前聊天") {
         val key = if (history == null) "$group|$status|$actionLabel" else
             "$group|${history.id}|${history.state}|${history.screens}|${history.attempts}|${history.reason}"
         if (panel != null && renderKey == key && lastEvent == null && !loading) return
         this.group = group; this.status = status; this.history = history; this.actionLabel = actionLabel
-        lastEvent = null; loading = false; expanded = false; render(); renderKey = key
+        lastEvent = null; lastInsight = null; loading = false; expanded = false; render(); renderKey = key
     }
     fun showLoading(useModel: Boolean = false) {
         history = null
-        lastEvent = null; loading = true; usingModel = useModel; expanded = false; render()
+        lastEvent = null; lastInsight = null; loading = true; usingModel = useModel; expanded = false; render()
     }
     fun showEvent(event: AttentionEvent) {
         history = null
         if (lastEvent?.id != event.id) expanded = false
         group = event.sourceGroup
-        lastEvent = event; loading = false; render()
+        lastEvent = event; lastInsight = null; loading = false; render()
+    }
+    fun showIntent(insight: IntentInsight) {
+        history = null
+        group = insight.group
+        lastEvent = null; lastInsight = insight; loading = false; expanded = true
+        prefs.overlayCollapsed = false
+        renderKey = ""
+        render()
     }
     fun showError(message: String) { hide(); toast(message) }
     fun toast(message: String) = Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
@@ -95,6 +109,7 @@ class AttentionOverlayController(private val context: Context) {
         if (!prefs.enabled || dragging) return
         if (!accessibilityWindow && !Settings.canDrawOverlays(context)) { diagnostics.overlay("缺少悬浮窗权限"); return }
         val event = lastEvent
+        val insight = lastInsight
         val collapsed = prefs.overlayCollapsed
         val view = ui.column().apply {
             visibility = if (hiddenForCapture) View.INVISIBLE else View.VISIBLE
@@ -107,8 +122,9 @@ class AttentionOverlayController(private val context: Context) {
             prefs.bubbleX = -1; prefs.bubbleY = -1; render()
         }
         header.addView(handle)
-        val label = when { loading -> if (usingModel) "DeepSeek 整理中" else "本地整理中"; event != null -> "${event.priority.label} · 新事件"; else -> "Attention Guard" }
+        val label = when { loading -> if (usingModel) "DeepSeek 整理中" else "本地整理中"; insight != null -> "Jev 意图线索 · 本地"; event != null -> "${event.priority.label} · 新事件"; else -> "Attention Guard" }
         if (collapsed) {
+            header.addView(ui.iconButton(R.drawable.ag_focus, "识别当前微信聊天") { onManualAnalyze?.invoke() })
             val session = history
             when (session?.state) {
                 HistoryState.RUNNING -> header.addView(ui.iconButton(R.drawable.ag_pause, "暂停回溯") { onHistoryPause?.invoke() })
@@ -139,9 +155,22 @@ class AttentionOverlayController(private val context: Context) {
             controls.addView(ui.iconButton(R.drawable.ag_x, "结束回溯") { onHistoryCancel?.invoke() })
             controls.addView(ui.iconButton(R.drawable.ag_notebook_tabs, "查看采集记录") { onHistorySettings?.invoke() })
             view.addView(controls)
+        } else if (!prefs.overlayCollapsed && expanded && insight != null) {
+            view.addView(ui.text(insight.label, R.dimen.ag_type_heading, bold = true).apply { layoutParams = ui.lp(4) })
+            view.addView(ui.text("依据 · ${insight.sender}：${insight.evidence}", R.dimen.ag_type_label, ui.sub).apply {
+                layoutParams = ui.lp(8); maxLines = 4; ellipsize = android.text.TextUtils.TruncateAt.END
+            })
+            view.addView(ui.text("建议 · ${insight.nextStep}", R.dimen.ag_type_label).apply {
+                layoutParams = ui.lp(8); maxLines = 3
+            })
+            view.addView(ui.text("来源 · 微信当前会话 · ${SimpleDateFormat("HH:mm", Locale.SIMPLIFIED_CHINESE).format(Date(insight.capturedAt))} · 可见节点",
+                R.dimen.ag_type_caption, ui.sub).apply { layoutParams = ui.lp(8); maxLines = 2 })
+            insight.eventId?.let { view.addView(ui.button("查看相关事件", R.drawable.ag_arrow_up_right) { openApp(it) }.apply { layoutParams = ui.lp(12) }) }
+            view.addView(ui.button("再次识别", R.drawable.ag_focus, false) { onManualAnalyze?.invoke() }.apply { layoutParams = ui.lp(8) })
         } else if (!prefs.overlayCollapsed && expanded && event != null) {
             view.addView(ui.text(event.title, R.dimen.ag_type_heading, bold = true).apply { layoutParams = ui.lp(4) })
             view.addView(ui.text(event.summary, R.dimen.ag_type_label, ui.sub).apply { layoutParams = ui.lp(8) })
+            view.addView(ui.text("来源 · ${event.captureOrigin.label} · ${event.sourcePerson}", R.dimen.ag_type_caption, ui.sub).apply { layoutParams = ui.lp(8) })
             event.dueLabel?.let { view.addView(ui.text(it, R.dimen.ag_type_label, ui.priority(event.priority).first, true).apply { layoutParams = ui.lp(12) }) }
             view.addView(ui.button("打开观测簿", R.drawable.ag_arrow_up_right) { openApp() }.apply { layoutParams = ui.lp(12) })
             view.addView(ui.button("收起", R.drawable.ag_minimize_2, false) { expanded = false; render() }.apply { layoutParams = ui.lp(8) })
@@ -155,7 +184,7 @@ class AttentionOverlayController(private val context: Context) {
         val metrics = wm.currentWindowMetrics
         val bounds = metrics.bounds
         val insets = metrics.windowInsets.getInsetsIgnoringVisibility(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
-        val width = minOf(ui.dp(if (collapsed) 152 else if (expanded) 312 else 280), bounds.width() - insets.left - insets.right - ui.dp(16))
+        val width = minOf(ui.dp(if (collapsed) 200 else if (expanded) 312 else 280), bounds.width() - insets.left - insets.right - ui.dp(16))
         view.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
             View.MeasureSpec.makeMeasureSpec(bounds.height() - insets.top - insets.bottom, View.MeasureSpec.AT_MOST))
         val maxX = (bounds.width() - insets.right - width).coerceAtLeast(insets.left)
@@ -207,11 +236,11 @@ class AttentionOverlayController(private val context: Context) {
         }
             .onFailure { diagnostics.overlay("挂窗失败：${it.javaClass.simpleName}") }
     }
-    private fun openApp() {
+    private fun openApp(eventId: String? = lastEvent?.id) {
         hide()
         runCatching {
             context.startActivity(Intent(context, MainActivity::class.java)
-                .putExtra(MainActivity.EXTRA_EVENT_ID, lastEvent?.id)
+                .putExtra(MainActivity.EXTRA_EVENT_ID, eventId)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP))
         }.onFailure { toast("暂时无法打开，请从桌面进入 Attention Guard") }
     }

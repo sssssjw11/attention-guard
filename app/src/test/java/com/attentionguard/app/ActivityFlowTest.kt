@@ -57,6 +57,40 @@ class ActivityFlowTest {
         } finally { controller.pause().stop().destroy() }
     }
 
+    @Test fun eventRowQuickActionsCompleteArchiveAndRestoreWithoutOpeningDetail() {
+        val event = DemoAttentionData.events.first().copy(id = "quick-event",
+            captureOrigin = CaptureOrigin.WECHAT_MANUAL, sourceCapturedAt = 1_700_000_000_000L)
+        EventStore(context).upsert(event)
+        val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
+        try {
+            val activity = controller.get()
+            descendants(activity.window.decorView).first { it.contentDescription == "标记完成：${event.title}" }.performClick()
+            assertEquals(EventStatus.COMPLETED, EventStore(context).load().single().status)
+            assertFalse(texts(activity).contains("事件记录"))
+            descendants(activity.window.decorView).filterIsInstance<BottomNavigationView>().single().selectedItemId = R.id.ag_ledger
+            activity.findViewById<MaterialButton>(500 + EventFilter.COMPLETED.ordinal).performClick()
+            descendants(activity.window.decorView).first { it.contentDescription == "归档：${event.title}" }.performClick()
+            assertTrue(EventStore(context).load().single().archived)
+            activity.findViewById<MaterialButton>(500 + EventFilter.ARCHIVED.ordinal).performClick()
+            assertTrue(texts(activity).contains(event.title))
+            descendants(activity.window.decorView).first { it.contentDescription == "移出归档：${event.title}" }.performClick()
+            assertFalse(EventStore(context).load().single().archived)
+        } finally { controller.pause().stop().destroy() }
+    }
+
+    @Test fun detailShowsCaptureProvenance() {
+        val event = DemoAttentionData.events.first().copy(id = "source-event",
+            captureOrigin = CaptureOrigin.WECHAT_MANUAL, sourceCapturedAt = 1_700_000_000_000L)
+        EventStore(context).upsert(event)
+        val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
+        try {
+            val activity = controller.get()
+            descendants(activity.window.decorView).first { it.isClickable && it.contentDescription?.startsWith(event.title) == true }.performClick()
+            assertTrue(texts(activity).contains("微信 · 手动识别"))
+            assertTrue(texts(activity).any { it.startsWith("采集于 ") })
+        } finally { controller.pause().stop().destroy() }
+    }
+
     @Test fun ledgerSearchAndFilterSurviveActivityRecreation() {
         EventStore(context).upsert(DemoAttentionData.events.first().copy(id = "test-event"))
         val controller = Robolectric.buildActivity(MainActivity::class.java).setup()

@@ -159,7 +159,7 @@ class GuardUi(val context: Context) {
         accessibleAction(this, "$label，$value 个，查看列表", action)
     }
 
-    private fun accessibleAction(view: ViewGroup, label: String, action: () -> Unit) {
+    fun accessibleAction(view: ViewGroup, label: String, action: () -> Unit) {
         selectable(view, android.graphics.Color.TRANSPARENT, null)
         view.contentDescription = label
         for (i in 0 until view.childCount) view.getChildAt(i).importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS

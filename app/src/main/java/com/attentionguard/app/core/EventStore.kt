@@ -48,11 +48,21 @@ class EventStore(context: Context) {
         current
     }
 
+    fun setArchived(id: String, archived: Boolean): List<AttentionEvent> = synchronized(LOCK) {
+        val current = load().map { event ->
+            if (event.id != id) event else event.withArchive(archived)
+        }
+        check(!readFailed) { "本地记录暂时无法读取，未覆盖原数据" }
+        save(current)
+        current
+    }
+
     private fun merge(old: AttentionEvent, fresh: AttentionEvent): AttentionEvent {
         val updates = (old.updates + fresh.updates).distinctBy { "${it.title}|${it.detail}" }
         return fresh.copy(
             status = if (old.status == EventStatus.COMPLETED) old.status else fresh.status,
             previousStatus = old.previousStatus,
+            archived = old.archived,
             updates = updates.takeLast(8),
             evidence = (old.evidence + fresh.evidence).distinct().takeLast(6),
             reviewNotes = fresh.reviewNotes.ifEmpty { old.reviewNotes }.distinct().takeLast(6),
@@ -89,6 +99,9 @@ class EventStore(context: Context) {
         put("status", event.status.name)
         put("previousStatus", event.previousStatus?.name)
         put("analysisSource", event.analysisSource)
+        put("captureOrigin", event.captureOrigin.name)
+        put("sourceCapturedAt", event.sourceCapturedAt)
+        put("archived", event.archived)
         put("category", event.category.name)
         put("attentionScore", event.attentionScore)
         put("dueLabel", event.dueLabel)
@@ -126,6 +139,9 @@ class EventStore(context: Context) {
                 enumOr(EventStatus.ACTION_REQUIRED, it)
             },
             analysisSource = json.optString("analysisSource", "本地规则"),
+            captureOrigin = enumOr(CaptureOrigin.UNKNOWN, json.optString("captureOrigin")),
+            sourceCapturedAt = json.optLong("sourceCapturedAt").takeIf { it > 0 },
+            archived = json.optBoolean("archived", false),
             category = enumOr(EventCategory.ACTIVITY, json.optString("category")),
             attentionScore = json.optInt("attentionScore", 0),
             dueLabel = json.optString("dueLabel").takeIf { it.isNotBlank() && it != "null" },
@@ -167,11 +183,11 @@ class EventStore(context: Context) {
 }
 
 fun attentionStatsFrom(events: List<AttentionEvent>): AttentionStats = AttentionStats(
-    observed = events.size,
+    observed = events.count { !it.archived },
     actionRequired = events.count {
-        it.status != EventStatus.COMPLETED &&
+        !it.archived && it.status != EventStatus.COMPLETED &&
             (it.status == EventStatus.ACTION_REQUIRED || it.priority == EventPriority.P0)
     },
-    dueSoon = events.count { it.dueLabel != null && it.status != EventStatus.COMPLETED },
-    completed = events.count { it.status == EventStatus.COMPLETED }
+    dueSoon = events.count { !it.archived && it.dueLabel != null && it.status != EventStatus.COMPLETED },
+    completed = events.count { !it.archived && it.status == EventStatus.COMPLETED }
 )

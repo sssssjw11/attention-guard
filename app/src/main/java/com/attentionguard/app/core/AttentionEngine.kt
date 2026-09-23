@@ -18,7 +18,7 @@ object AttentionEngine {
     private val noisePattern = Regex("^(收到|好的|好滴|哈哈|谢谢|请查收|顶|已阅)[。！!、，, ]*$")
 
     @Suppress("UNUSED_PARAMETER")
-    fun buildEvent(snapshot: ChatSnapshot, context: String = ""): AttentionEvent? {
+    fun buildEvent(snapshot: ChatSnapshot, context: String = "", origin: CaptureOrigin = CaptureOrigin.UNKNOWN): AttentionEvent? {
         val visible = snapshot.messages.filter { it.text.isNotBlank() && !noisePattern.matches(it.text.trim()) }.takeLast(12)
         if (visible.isEmpty() || snapshot.title.isNullOrBlank()) return null
         // Only connect adjacent corrections from the same identifiable sender.
@@ -94,6 +94,8 @@ object AttentionEngine {
             updatedLabel = "$now 更新",
             updates = updates,
             evidence = messages.takeLast(4).map { it.text.take(160) }.distinct(),
+            captureOrigin = origin,
+            sourceCapturedAt = snapshot.capturedAt,
             reviewNotes = buildList {
                 if (authoritative) add("发送者名称包含管理方信号，身份尚未验证")
                 if (actionable) add("检测到明确行动要求")

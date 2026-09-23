@@ -10,6 +10,8 @@ import android.view.accessibility.AccessibilityWindowInfo
 import com.google.android.material.button.MaterialButton
 import com.attentionguard.app.core.MessageArchive
 import com.attentionguard.app.core.Prefs
+import com.attentionguard.app.core.CaptureOrigin
+import com.attentionguard.app.core.EventStore
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Test
@@ -88,6 +90,16 @@ class ChatCaptureServiceTest {
         Prefs(context).autoAnalyze = false
         service.activeRoot = root(); service.connect(); tick(); tick()
         MessageArchive(context).use { assertEquals(1, it.count().total) }
+    }
+    @Test fun manualRecognitionUsesCurrentWeChatEvenWhenAutoAnalysisIsOff() {
+        Prefs(context).autoAnalyze = false
+        service.activeRoot = root(message = "请大家明天提交作业")
+        service.connect(); tick()
+        button("识别当前聊天").performClick(); drain()
+        val event = EventStore(context).load().single()
+        assertEquals(CaptureOrigin.WECHAT_MANUAL, event.captureOrigin)
+        assertTrue(windows.views.asSequence().flatMap { children(it) }.filterIsInstance<android.widget.TextView>()
+            .any { it.text.toString().contains("可能在提出行动请求") })
     }
     @Test fun foreignForegroundAndWhitelistNeverPersistContent() {
         Prefs(context).whitelist = setOf("Allowed")

@@ -16,8 +16,7 @@ data class Msg(
     val captureMethod: String = "nodes"
 )
 
-/** A snapshot of the currently-open conversation in whichever chat app is
- *  foreground (see ChatAppAdapter). */
+/** A snapshot of the currently visible WeChat conversation. */
 data class ChatSnapshot(
     val title: String?,
     val messages: List<Msg>,
@@ -26,30 +25,9 @@ data class ChatSnapshot(
 ) {
     val latestFrom: String? get() = messages.lastOrNull()?.side
 
-    val isLikelyGroup: Boolean
-        get() = title?.contains("群") == true || messages.mapNotNull { it.sender }.distinct().size > 1
-
     /** Include the entire viewport so scrolling at the top is not discarded. */
     fun signature(): String =
         "${sourcePackage.orEmpty()}|${title.orEmpty()}|" + messages.joinToString("|") {
             "${it.side}:${it.sender.orEmpty()}:${it.type}:${it.text.length}:${it.text}:${it.date}:${it.timeLabel}:${it.captureMethod}"
         }
 }
-
-/** Optional structured model result retained for compatibility with stored data. */
-data class Analysis(
-    val trueIntent: Choice?,
-    val dangerLevel: Score?,
-    val sheNeeds: Choice?,
-    val shouldReplyNow: Double?,
-    val bestAction: Choice?,
-    val tensionResolved: Double?,
-    val literalQuestion: Double?,
-    val rankedReplies: List<RankedReply>,
-    val latencyMs: Long,
-    val error: String? = null
-)
-
-data class Choice(val choice: String, val confidence: Double, val probabilities: Map<String, Double>)
-data class Score(val score: Double, val confidence: Double, val maxLevel: Int)
-data class RankedReply(val text: String, val prob: Double)

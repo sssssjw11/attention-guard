@@ -32,6 +32,12 @@ data class EventUpdate(
 
 enum class UpdateTone { POSITIVE, WARNING, NEUTRAL }
 
+enum class CaptureOrigin(val label: String) {
+    WECHAT_AUTO("微信 · 自动识别"),
+    WECHAT_MANUAL("微信 · 手动识别"),
+    UNKNOWN("来源待核对")
+}
+
 data class AttentionEvent(
     val id: String,
     val title: String,
@@ -50,7 +56,10 @@ data class AttentionEvent(
     val evidence: List<String> = emptyList(),
     val reviewNotes: List<String> = emptyList(),
     val previousStatus: EventStatus? = null,
-    val analysisSource: String = "本地规则"
+    val analysisSource: String = "本地规则",
+    val captureOrigin: CaptureOrigin = CaptureOrigin.UNKNOWN,
+    val sourceCapturedAt: Long? = null,
+    val archived: Boolean = false
 )
 
 data class AttentionStats(
@@ -148,19 +157,4 @@ object DemoAttentionData {
         )
     )
 
-    val stats = AttentionStats(observed = 12, actionRequired = 4, dueSoon = 2, completed = 6)
-
-    val groups = listOf(
-        SourceGroup("网络工程 2027 届班级群", "班级", "高频", "重点观测 DDL、@所有人和班委消息"),
-        SourceGroup("计算机与人工智能学院通知群", "学院", "稳定", "教务与奖学金通知优先"),
-        SourceGroup("计算机网络课程群", "课程", "稳定", "识别调课、作业和实验要求"),
-        SourceGroup("2027 届就业信息群", "就业", "低频", "只保留校招、实习和报名信息")
-    )
 }
-
-data class SourceGroup(
-    val title: String,
-    val kind: String,
-    val frequency: String,
-    val policy: String
-)
