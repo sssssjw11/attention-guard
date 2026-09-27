@@ -184,11 +184,18 @@ The overlay shows the actual conversation name and a text state with pause/stop
 controls; it never suggests that all history was recovered. Message rows separate
 source, day confidence and raw text; OCR results carry a verification label.
 Progress counts observed pages and reports gaps rather than inventing a percent.
-The collapsed overlay is a 200dp by 56dp toolbar with four 48dp controls: move,
-manual recognition, history/pause/resume, expand. History pause remains reachable
-when collapsed, and a manual intent result expands the card automatically.
-Only the background opacity is adjustable (96-100%); text and icons stay opaque.
+The event-monitoring overlay collapses to a 248dp by 56dp toolbar with five
+48dp controls: move, mark current conversation, enter intent mode,
+history/pause/resume and expand. History pause remains reachable when collapsed.
+Intent mode uses a compact move / return to event monitoring / refresh / expand
+toolbar and a persistent segmented mode control when expanded. Entering intent
+mode expands the card once; automatic context updates do not reopen it.
+Only the background opacity is adjustable (0-100%); text and icons stay opaque.
 Changing state updates the existing window instead of removing and remounting it.
+The in-chat and app-wide custom analysis results both display importance and
+heuristic context confidence alongside context and source; no conversation name is
+required. The app-wide custom page uses one multiline text field and a fixed
+primary action. Its result has a manual-input source label and no event-card styling.
 
 ### Iconography
 

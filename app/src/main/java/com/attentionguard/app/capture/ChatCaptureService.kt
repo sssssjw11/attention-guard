@@ -10,9 +10,12 @@ import android.os.SystemClock
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import com.attentionguard.app.CaptureActivity
+import com.attentionguard.app.MarkChatActivity
 import com.attentionguard.app.core.AttentionEngine
 import com.attentionguard.app.core.CaptureOrigin
+import com.attentionguard.app.core.CaptureMode
 import com.attentionguard.app.core.ChatSnapshot
+import com.attentionguard.app.core.ConversationScope
 import com.attentionguard.app.core.EventStore
 import com.attentionguard.app.core.JevIntentEngine
 import com.attentionguard.app.core.MessageArchive
@@ -38,7 +41,15 @@ open class ChatCaptureService : AccessibilityService(), CaptureActions {
     private var snapshot: ChatSnapshot? = null
     private var inspection: ChatInspection? = null
     private var signature = ""
-    @Volatile private var manualSignature: String? = null
+    private var intentSignature: String? = null
+    private class PendingMark(
+        val revision: Int, var windowId: Int, var snapshot: ChatSnapshot, val startedAt: Long,
+        var confirming: Boolean = false
+    )
+    private var pendingMark: PendingMark? = null
+    private var pinnedTitle: PinnedChatTitle? = null
+    private var titleResolutionGeneration = 0
+    private var currentOrigin = CaptureOrigin.WECHAT_AUTO
     private var dismissedTitle: String? = null
     private var liveSuppressedTitle: String? = null
     private var viewportRevision = 0
@@ -61,12 +72,15 @@ open class ChatCaptureService : AccessibilityService(), CaptureActions {
     }
     private val scrollStep = Runnable { scrollHistory() }
     private val preferenceListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-        if (key in setOf("enabled", "auto_analyze", "whitelist", "cloud_enabled", "deepseek_encrypted_v1", "deepseek_model", "relationship", "local_ocr_enabled")) {
+        if (key in setOf("enabled", "auto_analyze", "whitelist", "cloud_enabled", "deepseek_encrypted_v1", "deepseek_model", "relationship", "local_ocr_enabled", "capture_mode")) {
             main.post {
                 if (!alive) return@post
-                pauseHistory("观测设置已变化，请重新确认回溯")
+                if (!prefs.enabled || key == "capture_mode") cancelTitleResolution()
+                if (prefs.captureMode == CaptureMode.INTENT) stopHistoryForIntent()
+                else pauseHistory("观测设置已变化，请重新确认回溯")
                 dataGeneration++; invalidate(); ocr?.retry()
-                if (key == "enabled") updateKeepAlive()
+                dismissedTitle = null
+                if (key == "enabled" || key == "capture_mode") updateKeepAlive()
                 if (prefs.enabled) safeCapture() else diagnostics.state("观测已暂停")
             }
         }
@@ -84,7 +98,14 @@ open class ChatCaptureService : AccessibilityService(), CaptureActions {
         shared.registerOnSharedPreferenceChangeListener(preferenceListener)
         alive = true
         overlay = AttentionOverlayController(this).also { panel ->
-            panel.onManualAnalyze = { manualRecognizeCurrent() }
+            panel.onModeChange = { mode ->
+                if (mode != prefs.captureMode) {
+                    if (mode == CaptureMode.INTENT) prefs.overlayCollapsed = false
+                    prefs.captureMode = mode
+                }
+            }
+            panel.onRefreshIntent = { if (prefs.captureMode == CaptureMode.INTENT) { intentSignature = null; safeCapture() } }
+            panel.onMarkCurrentChat = { markCurrentChat() }
             panel.onHistorySettings = {
                 pauseHistory()
                 runCatching { startActivity(Intent(this, CaptureActivity::class.java)
@@ -126,9 +147,16 @@ open class ChatCaptureService : AccessibilityService(), CaptureActions {
     private fun invalidate() {
         ocr?.cancel()
         cancelPendingAnalysis()
-        snapshot = null; inspection = null; signature = ""; manualSignature = null
+        snapshot = null; inspection = null; signature = ""; intentSignature = null
+        currentOrigin = CaptureOrigin.WECHAT_AUTO
         CaptureRuntime.lastVisibleTitle = null
         overlay?.hide()
+    }
+
+    private fun cancelTitleResolution() {
+        titleResolutionGeneration++
+        if (pendingMark != null) ocr?.cancel()
+        pendingMark = null
     }
 
     private fun updateKeepAlive() {
@@ -158,29 +186,70 @@ open class ChatCaptureService : AccessibilityService(), CaptureActions {
     private fun capture() {
         if (!prefs.enabled) { invalidate(); diagnostics.state("观测已暂停"); return }
         val root = foregroundRoot() ?: run {
+            pinnedTitle?.pauseContinuity()
             pauseHistory("已离开微信或锁屏，回到目标会话后可继续")
             if (snapshot != null) dataGeneration++
             invalidate(); dismissedTitle = null; liveSuppressedTitle = null
             diagnostics.state("等待前台微信会话")
             return
         }
-        val result = adapter.inspect(root, resources)
+        val result = withPinnedTitle(adapter.inspect(root, resources), root.windowId)
         diagnostics.inspected(result.nodeCount, result.knownBubbles, result.structuralBubbles,
             result.snapshot?.messages?.size ?: 0, result.reason)
+        if (prefs.captureMode == CaptureMode.INTENT) { captureIntent(result); return }
         val next = result.snapshot
         if (next == null || next.title.isNullOrBlank() || next.messages.isEmpty() || !prefs.isAllowed(next.title)) {
             pauseHistory("会话无法确认或没有可读消息，已停止翻页")
             if (snapshot != null) dataGeneration++
-            cancelPendingAnalysis(); snapshot = null; inspection = null; signature = ""; manualSignature = null
+            cancelPendingAnalysis(); snapshot = null; inspection = null; signature = ""
             CaptureRuntime.lastVisibleTitle = null
-            val reason = if (next != null && !prefs.isAllowed(next.title)) "会话未匹配观测范围" else result.reason
+            val reason = if (next != null && !next.title.isNullOrBlank() && !prefs.isAllowed(next.title)) "会话未匹配观测范围" else result.reason
             diagnostics.state(reason)
             // A blocked tree must still be diagnosable, but never treated as messages.
-            if (dismissedTitle == null) overlay?.showIdle(null, reason, actionLabel = "重新读取")
+            if (dismissedTitle == null) overlay?.showIdle(if (next != null && !prefs.isAllowed(next.title)) next.title else null, reason)
             if (prefs.localOcrEnabled && next != null && prefs.isAllowed(next.title)) requestOcr(result, root.windowId)
             return
         }
-        acceptSnapshot(next, result)
+        acceptSnapshot(next, result, if (result.reason == "标题由手动确认") CaptureOrigin.WECHAT_MANUAL else CaptureOrigin.WECHAT_AUTO)
+    }
+
+    private fun withPinnedTitle(result: ChatInspection, windowId: Int): ChatInspection {
+        val pin = pinnedTitle ?: return result
+        val current = result.snapshot ?: run { pin.pauseContinuity(); return result }
+        val titled = pin.resolve(current, windowId)
+        if (titled == null && pin.shouldExpire()) { pinnedTitle = null }
+        if (titled == null) return result
+        return result.copy(snapshot = titled, reason = "标题由手动确认")
+    }
+
+    private fun captureIntent(result: ChatInspection) {
+        CaptureRuntime.lastVisibleTitle = null
+        val current = result.snapshot?.takeIf { result.knownBubbles + result.structuralBubbles > 0 }
+        if (current == null) {
+            intentSignature = null
+            diagnostics.state("意图分析 · 等待可读聊天")
+            overlay?.showIdle(null, "等待当前微信聊天的可读文字", actionLabel = "刷新整屏语境")
+            return
+        }
+        val currentSignature = current.signature()
+        if (intentSignature == currentSignature && overlay?.isShowing() == true) return
+        intentSignature = currentSignature
+        val insight = JevIntentEngine.analyze(current)
+        diagnostics.analyzed("INTENT", current.messages.size, 0, insight?.importance?.name ?: "NONE", insight?.confidence ?: 0)
+        if (insight == null) {
+            diagnostics.state("意图分析 · 当前屏幕没有可读的对方文字")
+            overlay?.showIdle(null, "当前屏幕没有可分析的对方文字", actionLabel = "刷新整屏语境")
+        } else {
+            diagnostics.state("意图分析 · 整屏语境已更新")
+            overlay?.showIntent(insight, expand = false)
+        }
+    }
+
+    private fun stopHistoryForIntent() {
+        main.removeCallbacks(scrollStep)
+        CaptureRuntime.history?.let { it.cancel(); receipt.save(it) }
+        CaptureRuntime.history = null
+        liveSuppressedTitle = null
     }
 
     private fun requestOcr(result: ChatInspection, windowId: Int) {
@@ -197,29 +266,30 @@ open class ChatCaptureService : AccessibilityService(), CaptureActions {
                 }.getOrDefault(false)
         }) { recognized, reason ->
             diagnostics.inspected(result.nodeCount, result.knownBubbles, 0, recognized?.messages?.size ?: 0, reason)
-            if (recognized != null && recognized.messages.isNotEmpty()) acceptSnapshot(recognized, result)
+            if (recognized != null && recognized.messages.isNotEmpty()) acceptSnapshot(recognized, result,
+                if (result.reason == "标题由手动确认") CaptureOrigin.WECHAT_MANUAL else CaptureOrigin.WECHAT_AUTO)
             else { diagnostics.state(reason); if (dismissedTitle == null) overlay?.showIdle(null, reason) }
         }
     }
 
-    private fun acceptSnapshot(next: ChatSnapshot, result: ChatInspection) {
+    private fun acceptSnapshot(next: ChatSnapshot, result: ChatInspection, origin: CaptureOrigin) {
         if (snapshot?.title != next.title) {
             dataGeneration++; invalidate(); dismissedTitle = null
             if (liveSuppressedTitle != next.title) liveSuppressedTitle = null
         }
         CaptureRuntime.lastVisibleTitle = next.title
+        currentOrigin = origin
         snapshot = next; inspection = result
         val session = CaptureRuntime.history
         if (session?.state == HistoryState.RUNNING && session.config.title != next.title) pauseHistory("会话已切换，返回目标会话后可继续")
         val relevantHistory = session?.takeIf { it.config.title == next.title && it.state != HistoryState.CANCELLED }
         val fromOcr = next.messages.any { it.captureMethod == "ocr" }
-        diagnostics.state(if (fromOcr) "本机 OCR 采集，内容待核对" else if (relevantHistory?.state == HistoryState.RUNNING) "历史回溯中" else "正在监测可见消息")
+        diagnostics.state(if (fromOcr) "本机 OCR 采集，内容待核对" else if (relevantHistory?.state == HistoryState.RUNNING) "历史回溯中" else if (origin == CaptureOrigin.WECHAT_MANUAL) "标题手动确认，正在监测可见消息" else "正在监测可见消息")
         val changed = next.signature() != signature
-        if (changed && manualSignature != next.signature()) manualSignature = null
         if (changed || overlay?.isShowing() != true || relevantHistory != null) {
             if (dismissedTitle != next.title) overlay?.showIdle(next.title,
-                if (fromOcr) "OCR ${next.messages.size} 条，内容待核对" else "已识别 ${next.messages.size} 条可见消息", relevantHistory,
-                actionLabel = if (fromOcr) "重新读取" else "识别当前聊天")
+                if (fromOcr) "OCR ${next.messages.size} 条，内容待核对" else "已识别 ${next.messages.size} 条可见消息${if (origin == CaptureOrigin.WECHAT_MANUAL) " · 标题手动确认" else ""}", relevantHistory,
+                actionLabel = "切换意图分析")
         }
         // A configured/paused history session must not leak historical content into live AI events.
         if (relevantHistory != null && relevantHistory.state != HistoryState.RUNNING) return
@@ -231,13 +301,13 @@ open class ChatCaptureService : AccessibilityService(), CaptureActions {
         val stream = activeSession?.id ?: "live:${next.sourcePackage}:${next.title}"
         archiving = true
         storageWorker.execute {
-            if (!alive || dataRequest != dataGeneration || !prefs.enabled) {
+            if (!alive || dataRequest != dataGeneration || !prefs.enabled || prefs.captureMode != CaptureMode.EVENT) {
                 main.post { archiving = false }
                 return@execute
             }
             val outcome = runCatching {
                 archive.append(next, stream, activeSession?.config?.range) {
-                    alive && dataRequest == dataGeneration && prefs.enabled
+                    alive && dataRequest == dataGeneration && prefs.enabled && prefs.captureMode == CaptureMode.EVENT
                 }
             }
             main.post {
@@ -248,9 +318,9 @@ open class ChatCaptureService : AccessibilityService(), CaptureActions {
                     if (activeSession != null && CaptureRuntime.history === activeSession) {
                         activeSession.observe(next, write.gap); receipt.save(activeSession)
                         showHistory()
-                    } else if (prefs.autoAnalyze && !fromOcr && liveSuppressedTitle != next.title && manualSignature != next.signature()) {
+                    } else if (prefs.captureMode == CaptureMode.EVENT && prefs.autoAnalyze && !fromOcr && liveSuppressedTitle != next.title) {
                         // Persist local event immediately; cloud refinement remains debounced.
-                        analyzeLocal(next)
+                        analyzeLocal(next, origin)
                         main.postDelayed(debounce, 2200)
                     }
                 }.onFailure {
@@ -262,64 +332,199 @@ open class ChatCaptureService : AccessibilityService(), CaptureActions {
         }
     }
 
-    private fun analyzeLocal(current: ChatSnapshot) {
-        if (current.messages.any { it.captureMethod != "nodes" } || liveSuppressedTitle == current.title) return
-        val base = AttentionEngine.buildEvent(current, prefs.relationship, CaptureOrigin.WECHAT_AUTO) ?: return
+    private fun analyzeLocal(current: ChatSnapshot, origin: CaptureOrigin) {
+        if (current.messages.any { it.captureMethod != "nodes" } || liveSuppressedTitle == current.title || prefs.captureMode != CaptureMode.EVENT) return
+        val events = AttentionEngine.buildEvents(current, prefs.relationship, origin)
+        val base = AttentionEngine.primary(events)
+        diagnostics.analyzed("EVENT", current.messages.size, events.size, base?.category?.name ?: "NONE", base?.attentionScore ?: 0)
+        if (base == null) return
         val request = dataGeneration
         storageWorker.execute {
-            if (!alive || request != dataGeneration || !prefs.enabled || manualSignature == current.signature()) return@execute
-            val saved = runCatching { store.upsert(base) }
+            if (!alive || request != dataGeneration || !prefs.enabled || prefs.captureMode != CaptureMode.EVENT) return@execute
+            val saved = runCatching { store.upsertAll(events) }
             main.post {
-                if (!alive || request != dataGeneration) return@post
+                if (!alive || request != dataGeneration || prefs.captureMode != CaptureMode.EVENT ||
+                    snapshot?.signature() != current.signature()) return@post
                 if (saved.isFailure) diagnostics.storageError()
-                else if (manualSignature != current.signature() && AttentionEngine.shouldNotify(base) && dismissedTitle != current.title) overlay?.showEvent(base)
+                else if (dismissedTitle != current.title) overlay?.showEvent(base)
             }
         }
     }
 
-    private fun manualRecognizeCurrent() {
+    private fun markCurrentChat() {
         if (!alive || !prefs.enabled) { overlay?.toast("请先开启观测"); return }
-        ocr?.retry()
-        safeCapture()
-        val current = snapshot
-        if (current == null || current.sourcePackage != adapter.pkg || !prefs.isAllowed(current.title)) {
-            overlay?.toast("请先打开观测范围内的微信聊天")
-            return
-        }
-        if (CaptureRuntime.history?.let { it.config.title == current.title && it.state != HistoryState.CANCELLED } == true ||
-            liveSuppressedTitle == current.title) {
-            overlay?.toast("回溯期间不能识别当前聊天")
-            return
-        }
-        if (current.messages.any { it.captureMethod != "nodes" }) {
-            overlay?.toast("OCR 正文待核对，暂不推断意图")
-            return
-        }
-        val insight = JevIntentEngine.analyze(current)
-        if (insight == null) { overlay?.toast("当前可见区域没有可识别的对方文字"); return }
-        cancelPendingAnalysis()
-        manualSignature = current.signature()
-        overlay?.showIntent(insight)
-        val incoming = current.copy(messages = current.messages.filter { it.side == "other" })
-        val event = AttentionEngine.buildEvent(incoming, prefs.relationship, CaptureOrigin.WECHAT_MANUAL) ?: return
-        val request = dataGeneration
-        storageWorker.execute {
-            if (!alive || request != dataGeneration || !prefs.enabled) return@execute
-            val saved = runCatching { store.upsert(event) }
-            main.post {
-                if (!alive || request != dataGeneration || snapshot?.signature() != current.signature()) return@post
-                if (saved.isFailure) { diagnostics.storageError(); overlay?.toast("事件保存失败，意图线索仅供核对") }
-                else overlay?.showIntent(insight.copy(eventId = event.id))
+        cancelTitleResolution()
+        val root = foregroundRoot()
+        val inspection = root?.let { withPinnedTitle(adapter.inspect(it, resources), it.windowId) }
+        val fresh = inspection?.snapshot
+        val title = fresh?.takeIf { it.sourcePackage == adapter.pkg }?.title?.takeIf { it.isNotBlank() }
+        if (title == null) {
+            if (root == null || fresh == null || fresh.messages.isEmpty() || inspection.knownBubbles + inspection.structuralBubbles == 0) {
+                overlay?.toast("请先打开微信聊天再标记")
+                return
             }
+            val pending = PendingMark(titleResolutionGeneration, root.windowId, fresh, SystemClock.elapsedRealtime())
+            pendingMark = pending
+            if (!readGroupTitleFromChatInfo(pending)) requestOcrTitle(pending)
+            return
         }
+        runCatching { prefs.addRecognitionTerm(title) }
+            .onSuccess { result ->
+                overlay?.toast(when (result) {
+                    Prefs.RecognitionTermResult.ADDED_FIRST -> "已标记“$title”；观测范围已收窄到该词条"
+                    Prefs.RecognitionTermResult.ADDED -> "已将“$title”加入识别词条"
+                    Prefs.RecognitionTermResult.EXISTS -> "“$title”已在识别词条中"
+                })
+            }
+            .onFailure { overlay?.toast("识别词条保存失败，请重试") }
+    }
+
+    private fun isCurrentMark(pending: PendingMark): Boolean = alive && prefs.enabled &&
+        pendingMark === pending && pending.revision == titleResolutionGeneration &&
+        SystemClock.elapsedRealtime() - pending.startedAt <= 5 * 60_000L
+
+    private fun sameVisibleChat(pending: PendingMark): Boolean {
+        if (!isCurrentMark(pending)) return false
+        val root = foregroundRoot() ?: return false
+        val fresh = adapter.inspect(root, resources)
+        return fresh.knownBubbles + fresh.structuralBubbles > 0 && fresh.snapshot?.let {
+            PinnedChatTitle.matchesMessages(pending.snapshot, it, root.windowId == pending.windowId)
+        } == true
+    }
+
+    private fun abandonMark(pending: PendingMark) {
+        if (pendingMark !== pending) return
+        cancelTitleResolution()
+        overlay?.toast("会话已变化或未能返回，请回到目标聊天重新标记")
+    }
+
+    private fun requestOcrTitle(pending: PendingMark) {
+        if (!isCurrentMark(pending)) return
+        if (!sameVisibleChat(pending)) { abandonMark(pending); return }
+        ocr?.readVisibleTitle({ sameVisibleChat(pending) }) { suggested, reason ->
+            if (!isCurrentMark(pending)) return@readVisibleTitle
+            if (reason == "会话已变化" || !sameVisibleChat(pending)) {
+                abandonMark(pending)
+                return@readVisibleTitle
+            }
+            // An ellipsis is not a complete name, even if OCR returned it as text.
+            launchMarkActivity(pending, suggested?.takeUnless(WeChatAdapter::isTruncatedTitle), "本机标题识别")
+        }
+    }
+
+    /**
+     * WeChat paints long group names into an empty ActionBar container. Its
+     * chat-info page exposes the authoritative full name in android:id/summary.
+     * This is only opened after the user explicitly asks to mark the current chat.
+     */
+    private fun readGroupTitleFromChatInfo(pending: PendingMark): Boolean {
+        val root = foregroundRoot() ?: return false
+        val info = findNode(root) { node ->
+            node.isVisibleToUser && node.isClickable && !node.isEditable &&
+                node.packageName?.toString() == adapter.pkg &&
+                (node.viewIdResourceName == CHAT_INFO_BUTTON_ID ||
+                    node.contentDescription?.toString() == "聊天信息")
+        } ?: return false
+        if (!info.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return false
+        main.postDelayed({ pollChatInfoTitle(pending, 0) }, CHAT_INFO_POLL_MS)
+        return true
+    }
+
+    private fun pollChatInfoTitle(pending: PendingMark, attempt: Int) {
+        if (!isCurrentMark(pending)) return
+        val root = foregroundRoot()
+        val page = root?.let(WeChatChatInfo::read)
+        if (page?.groupTitle != null || (page != null && attempt >= CHAT_INFO_TIMEOUT_ATTEMPTS)) {
+            // Never press Back on a different app or an unrelated WeChat page.
+            if (performGlobalAction(GLOBAL_ACTION_BACK)) {
+                main.postDelayed({ waitForOriginalChat(pending, page.groupTitle, 0) }, CHAT_INFO_POLL_MS)
+            } else abandonMark(pending)
+            return
+        }
+        if (attempt >= CHAT_INFO_TIMEOUT_ATTEMPTS) {
+            if (sameVisibleChat(pending)) requestOcrTitle(pending) else abandonMark(pending)
+            return
+        }
+        if (root != null && page == null && !sameVisibleChat(pending) && adapter.inspect(root, resources).snapshot != null) {
+            abandonMark(pending)
+            return
+        }
+        main.postDelayed({ pollChatInfoTitle(pending, attempt + 1) }, CHAT_INFO_POLL_MS)
+    }
+
+    private fun waitForOriginalChat(pending: PendingMark, title: String?, attempt: Int) {
+        if (!isCurrentMark(pending)) return
+        if (sameVisibleChat(pending)) {
+            if (title == null) requestOcrTitle(pending)
+            else launchMarkActivity(pending, title, "微信聊天信息")
+            return
+        }
+        if (attempt >= CHAT_INFO_TIMEOUT_ATTEMPTS) {
+            abandonMark(pending)
+            return
+        }
+        main.postDelayed({
+            waitForOriginalChat(pending, title, attempt + 1)
+        }, CHAT_INFO_POLL_MS)
+    }
+
+    private fun launchMarkActivity(pending: PendingMark, suggested: String?, source: String) {
+        if (!isCurrentMark(pending) || pending.confirming) return
+        if (!sameVisibleChat(pending)) { abandonMark(pending); return }
+        val root = foregroundRoot() ?: return
+        val current = adapter.inspect(root, resources).snapshot ?: return
+        if (suggested != null && !current.title.isNullOrBlank() &&
+            !ConversationScope.equivalent(suggested, current.title)) {
+            abandonMark(pending)
+            return
+        }
+        pending.snapshot = current
+        pending.windowId = root.windowId
+        pending.confirming = true
+        runCatching {
+            startActivity(Intent(this, MarkChatActivity::class.java)
+                .putExtra(MarkChatActivity.EXTRA_SUGGESTED_TITLE, suggested.orEmpty())
+                .putExtra(MarkChatActivity.EXTRA_TITLE_SOURCE, source)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK or
+                    Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS))
+        }.onFailure {
+            cancelTitleResolution()
+            overlay?.toast("暂时无法打开会话标记页")
+        }
+    }
+
+    private fun findNode(root: AccessibilityNodeInfo, predicate: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? {
+        var found: AccessibilityNodeInfo? = null
+        walkNodes(root) { node -> if (found == null && predicate(node)) found = node }
+        return found
+    }
+
+    private fun walkNodes(root: AccessibilityNodeInfo, visit: (AccessibilityNodeInfo) -> Unit) {
+        val stack = ArrayDeque<AccessibilityNodeInfo>()
+        stack.addLast(root)
+        var visited = 0
+        while (stack.isNotEmpty() && visited++ < 3000) {
+            val node = stack.removeLast()
+            visit(node)
+            for (index in node.childCount - 1 downTo 0) node.getChild(index)?.let(stack::addLast)
+        }
+    }
+
+    override fun confirmCurrentTitle(title: String): Boolean {
+        val pending = pendingMark ?: return false
+        val valid = isCurrentMark(pending) && pending.confirming
+        cancelTitleResolution()
+        if (!valid || title.isBlank() || title.length > 120 || WeChatAdapter.isTruncatedTitle(title)) return false
+        pinnedTitle = PinnedChatTitle(title.trim(), pending.windowId, pending.snapshot)
+        return true
     }
 
     private fun analyze() {
         val current = snapshot ?: return
         if (current.messages.any { it.captureMethod != "nodes" } || liveSuppressedTitle == current.title) return
-        if (!alive || !prefs.enabled || !prefs.isAllowed(current.title) || CaptureRuntime.history?.let { it.config.title == current.title && it.state != HistoryState.CANCELLED } == true) return
+        if (!alive || !prefs.enabled || prefs.captureMode != CaptureMode.EVENT || !prefs.isAllowed(current.title) || CaptureRuntime.history?.let { it.config.title == current.title && it.state != HistoryState.CANCELLED } == true) return
         val groupContext = prefs.relationship
-        val base = AttentionEngine.buildEvent(current, groupContext, CaptureOrigin.WECHAT_AUTO) ?: return
+        val base = AttentionEngine.primary(AttentionEngine.buildEvents(current, groupContext, currentOrigin)) ?: return
         if (!prefs.cloudEnabled || !prefs.hasKey() || !AttentionEngine.shouldNotify(base)) return
         cancelPendingAnalysis()
         val request = generation
@@ -329,14 +534,14 @@ open class ChatCaptureService : AccessibilityService(), CaptureActions {
         task = analysisWorker.submit {
             val result = runCatching { api.enrich(current, base, groupContext) }
             main.post {
-                if (!alive || request != generation || !prefs.enabled || snapshot?.signature() != current.signature()) return@post
+                if (!alive || request != generation || !prefs.enabled || prefs.captureMode != CaptureMode.EVENT || snapshot?.signature() != current.signature()) return@post
                 task = null; client = null
                 result.onSuccess { enriched ->
                     storageWorker.execute {
-                        if (!alive || request != generation) return@execute
+                        if (!alive || request != generation || prefs.captureMode != CaptureMode.EVENT) return@execute
                         val saved = runCatching { store.upsert(enriched) }
                         main.post stored@{
-                            if (!alive || request != generation) return@stored
+                            if (!alive || request != generation || prefs.captureMode != CaptureMode.EVENT) return@stored
                             if (saved.isFailure) diagnostics.storageError()
                             else if (dismissedTitle != current.title) overlay?.showEvent(enriched)
                         }
@@ -350,15 +555,16 @@ open class ChatCaptureService : AccessibilityService(), CaptureActions {
     }
 
     override fun armHistory(config: HistoryConfig): Boolean {
-        if (!alive || !prefs.enabled || !prefs.isAllowed(config.title) || config.range.end > java.time.LocalDate.now()) return false
+        if (!alive || !prefs.enabled || prefs.captureMode != CaptureMode.EVENT || !prefs.isAllowed(config.title) || config.range.end > java.time.LocalDate.now()) return false
         CaptureRuntime.history?.let { if (it.state in setOf(HistoryState.READY, HistoryState.RUNNING, HistoryState.PAUSED)) return false }
-        cancelPendingAnalysis(); dataGeneration++; manualSignature = null
+        cancelPendingAnalysis(); dataGeneration++
         CaptureRuntime.history = HistorySession(config).also { receipt.save(it) }
         dismissedTitle = null; signature = ""
         return true
     }
 
     private fun startHistory() {
+        if (prefs.captureMode != CaptureMode.EVENT) return
         safeCapture()
         val current = snapshot ?: return
         val session = CaptureRuntime.history ?: return
@@ -383,7 +589,7 @@ open class ChatCaptureService : AccessibilityService(), CaptureActions {
     override fun cancelHistory() {
         main.removeCallbacks(scrollStep)
         CaptureRuntime.history?.let { it.cancel(); receipt.save(it) }
-        dataGeneration++; signature = ""; manualSignature = null; dismissedTitle = null
+        dataGeneration++; signature = ""; dismissedTitle = null
         safeCapture()
     }
     private fun showHistory() {
@@ -392,6 +598,7 @@ open class ChatCaptureService : AccessibilityService(), CaptureActions {
             overlay?.showIdle(snapshot?.title, "仅保存在本机", session)
     }
     private fun scrollHistory() {
+        if (prefs.captureMode != CaptureMode.EVENT) return
         safeCapture()
         val session = CaptureRuntime.history ?: return
         if (!alive || !prefs.enabled || session.state != HistoryState.RUNNING || snapshot?.title != session.config.title) return
@@ -408,10 +615,12 @@ open class ChatCaptureService : AccessibilityService(), CaptureActions {
 
     override fun onInterrupt() {
         if (!alive) return
+        cancelTitleResolution()
         pauseHistory("无障碍服务被中断"); dataGeneration++; invalidate()
         diagnostics.state("服务被中断，正在等待恢复")
     }
     override fun onDestroy() {
+        cancelTitleResolution()
         if (alive) {
             pauseHistory("服务已断开，需重新开始任务")
             alive = false; dataGeneration++
@@ -427,5 +636,11 @@ open class ChatCaptureService : AccessibilityService(), CaptureActions {
         overlay = null
         storageWorker.shutdown(); analysisWorker.shutdownNow()
         super.onDestroy()
+    }
+
+    companion object {
+        private const val CHAT_INFO_BUTTON_ID = "com.tencent.mm:id/fq"
+        private const val CHAT_INFO_POLL_MS = 220L
+        private const val CHAT_INFO_TIMEOUT_ATTEMPTS = 14
     }
 }

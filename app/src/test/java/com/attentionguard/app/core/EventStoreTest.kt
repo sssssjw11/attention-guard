@@ -60,6 +60,23 @@ class EventStoreTest {
         assertEquals(EventStatus.COMPLETED, restored.status)
     }
 
+    @Test fun batchArchiveWritesSelectedEventsTogetherAndLeavesOthersUntouched() {
+        val first = event.copy(id = "batch-first")
+        val second = event.copy(id = "batch-second")
+        val third = event.copy(id = "batch-third", archived = true)
+        store.upsert(first)
+        store.upsert(second)
+        store.upsert(third)
+        val archived = store.setArchived(listOf(first.id, second.id), true)
+        assertTrue(archived.first { it.id == first.id }.archived)
+        assertTrue(archived.first { it.id == second.id }.archived)
+        assertTrue(archived.first { it.id == third.id }.archived)
+        val restored = store.setArchived(listOf(first.id, third.id), false)
+        assertFalse(restored.first { it.id == first.id }.archived)
+        assertTrue(restored.first { it.id == second.id }.archived)
+        assertFalse(restored.first { it.id == third.id }.archived)
+    }
+
     @Test fun oldRecordsWithoutOriginOrArchiveRemainReadable() {
         store.upsert(event)
         val old = JSONArray(file.readText()).getJSONObject(0)
@@ -71,6 +88,21 @@ class EventStoreTest {
         assertEquals(CaptureOrigin.UNKNOWN, loaded.captureOrigin)
         assertNull(loaded.sourceCapturedAt)
         assertFalse(loaded.archived)
+    }
+
+    @Test fun legacyBlankTitleDoesNotHideTheWholeArchiveOrRewriteOnRead() {
+        store.upsert(event)
+        val first = JSONArray(file.readText()).getJSONObject(0)
+        val blank = org.json.JSONObject(first.toString()).put("id", "blank-title").put("title", "")
+        val raw = JSONArray().put(blank).put(first).toString()
+        file.writeText(raw)
+        val loaded = store.load()
+        assertFalse(store.readFailed)
+        assertEquals(2, loaded.size)
+        assertEquals("未命名事项 · 请核对原文", loaded.first().title)
+        assertEquals(event.evidence, loaded.first().evidence)
+        assertEquals(raw, file.readText())
+        assertEquals(event, loaded.last())
     }
 
     @Test fun mergingKeepsRecentDistinctEvidenceAndUpdates() {

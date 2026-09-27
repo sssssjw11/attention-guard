@@ -10,6 +10,13 @@ import java.time.ZoneId
 
 class AttentionEngineTest {
 
+    @Test fun linkOnlyAnchorNeverProducesAnUnreadableBlankTitle() {
+        val snapshot = ChatSnapshot("通知群", listOf(Msg("other", "https://example.org/提交", "老师")))
+        val event = AttentionEngine.buildEvent(snapshot)
+        assertNotNull(event)
+        assertTrue(event!!.title.isNotBlank())
+    }
+
     @Test
     fun casualConversationDoesNotCreateEvent() {
         val snapshot = ChatSnapshot(
@@ -20,6 +27,38 @@ class AttentionEngineTest {
             )
         )
         assertNull(AttentionEngine.buildEvent(snapshot))
+    }
+
+    @Test
+    fun rankingAndDisappointmentSmallTalkDoesNotCreateEvent() {
+        val snapshot = ChatSnapshot(
+            title = "测试联系人A",
+            messages = listOf(
+                Msg("other", "是不是不满足啊", "同学"),
+                Msg("other", "那我是不是还有机会", "同学"),
+                Msg("other", "可惜", "同学"),
+                Msg("other", "发现下面那个排名相加比我高", "同学")
+            )
+        )
+        assertTrue(AttentionEngine.buildEvents(snapshot).isEmpty())
+    }
+
+    @Test
+    fun dayOnlyVideoDeadlineBecomesARecognizableActionEvent() {
+        val day = LocalDate.of(2026, 9, 27)
+        val event = AttentionEngine.buildEvent(ChatSnapshot(
+            title = "示例校园黑客松(93)",
+            messages = listOf(
+                Msg("other", "视频提交时间28号下午5点截止，提交到邮箱submissions@example.org", "测试组织者", date = day.toString())
+            ),
+            capturedAt = day.atTime(10, 0).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        ))
+        assertNotNull(event)
+        assertEquals(EventCategory.COMPETITION, event?.category)
+        assertEquals(EventStatus.ACTION_REQUIRED, event?.status)
+        assertEquals("2026-09-28 17:00", event?.dueLabel)
+        assertTrue(event?.attentionScore ?: 0 >= 60)
+        assertTrue(event?.evidence?.singleOrNull()?.contains("视频提交时间28号") == true)
     }
 
     @Test
@@ -50,6 +89,46 @@ class AttentionEngineTest {
         assertNotNull(event)
         assertEquals(EventCategory.COURSE, event?.category)
         assertNotNull(event?.actionLabel)
+    }
+
+    @Test
+    fun onlineMeetingNoticeShowsTypeImportanceAndAction() {
+        val event = AttentionEngine.buildEvent(ChatSnapshot(
+            title = "示例班级群(49)",
+            messages = listOf(
+                Msg("other", "@所有人 今晚七点要开个简短的线上班会，大家不要忘记", "测试班长"),
+                Msg("other", "#腾讯会议：000-000-000", "测试班长"),
+                Msg("other", "@所有人 等会七点要开班会，请各位同学不要迟到", "测试班长"),
+                Msg("other", "@所有人 可以先进会议", "测试班长"),
+                Msg("other", "没进的同学，抓紧时间，这个会议定的30分钟", "测试班长")
+            )
+        ))
+        assertNotNull(event)
+        assertEquals(EventCategory.MEETING, event?.category)
+        assertTrue(event?.priority == EventPriority.P0 || event?.priority == EventPriority.P1)
+        assertEquals("按时加入线上会议", event?.actionLabel)
+        assertTrue(event?.title.orEmpty().contains("会议"))
+        assertTrue(event?.evidence?.size ?: 0 >= 4)
+        assertTrue(event?.summary.orEmpty().contains("抓紧时间"))
+    }
+
+    @Test
+    fun chineseEveningMeetingTimeIsParsedFromTheWholeVisibleNotice() {
+        val day = LocalDate.of(2026, 9, 26)
+        val event = AttentionEngine.buildEvent(ChatSnapshot(
+            title = "示例班级群(49)",
+            messages = listOf(
+                Msg("other", "@所有人 今晚七点要开个简短的线上班会，大家不要忘记", "测试班长", date = day.toString()),
+                Msg("other", "#腾讯会议：000-000-000", "测试班长", date = day.toString()),
+                Msg("other", "@所有人 等会七点要开班会，请各位同学不要迟到", "测试班长", date = day.toString()),
+                Msg("other", "@所有人 可以先进会议", "测试班长", date = day.toString()),
+                Msg("other", "没进的同学，抓紧时间，这个会议定的30分钟", "测试班长", date = day.toString())
+            ),
+            capturedAt = day.atTime(15, 0).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        ))
+        assertNotNull(event)
+        assertEquals("2026-09-26 19:00", event?.dueLabel)
+        assertEquals(EventPriority.P0, event?.priority)
     }
 
     @Test

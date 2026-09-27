@@ -31,17 +31,19 @@ class DeepSeekAttentionClient internal constructor(
 
     fun enrich(snapshot: ChatSnapshot, base: AttentionEvent, context: String): AttentionEvent {
         val system = """
-            你是 Attention Guard 的校园群聊事件抽取器。
+            你是“偷闲”的校园群聊事件抽取器。
             只根据输入消息判断，不补充不存在的事实。返回 JSON 对象，不要 markdown。
             字段必须完整：title, summary, category, priority, status, attention_score,
             due_label, action_label, consequence, source_person。
-            category 只能是 academic_admin, course, employment, competition, activity。
+            category 只能是 academic_admin, course, employment, competition, activity, meeting。
             priority 只能是 P0, P1, P2, P3。不得仅因为措辞强烈就提高等级，必须有对应证据。
             status 只能是 action_required, monitoring, confirmed。只有用户可以标记完成。
             attention_score 是 1 到 99 的整数；没有明确截止时间时 due_label 为空字符串。
         """.trimIndent()
         val messages = JSONArray().apply {
-            snapshot.messages.takeLast(12).forEach { message ->
+            snapshot.messages.filter { message ->
+                base.evidence.any { message.text.startsWith(it) }
+            }.takeLast(12).forEach { message ->
                 put(JSONObject().apply {
                     put("sender", message.sender ?: if (message.side == "me") "我" else "群成员")
                     put("side", message.side)
@@ -158,7 +160,7 @@ class DeepSeekAttentionClient internal constructor(
                 }
                 require(clean(result.getString("title")).isNotBlank())
                 require(clean(result.getString("summary")).isNotBlank())
-                require(result.getString("category") in setOf("academic_admin", "course", "employment", "competition", "activity"))
+                require(result.getString("category") in setOf("academic_admin", "course", "employment", "competition", "activity", "meeting"))
                 require(result.getString("priority") in setOf("P0", "P1", "P2", "P3"))
                 require(result.getString("status") in setOf("action_required", "monitoring", "confirmed"))
                 val score = result.get("attention_score")
@@ -185,6 +187,7 @@ class DeepSeekAttentionClient internal constructor(
         "employment" -> EventCategory.EMPLOYMENT
         "competition" -> EventCategory.COMPETITION
         "activity" -> EventCategory.ACTIVITY
+        "meeting" -> EventCategory.MEETING
         else -> fallback
     }
 

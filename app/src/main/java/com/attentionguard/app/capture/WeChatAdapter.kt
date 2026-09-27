@@ -59,16 +59,46 @@ class WeChatAdapter {
             val leaves = parts.filter { item -> parts.none { other -> other != item && inside(item, other) } }
             val text = leaves.sortedBy { entries[it].bounds.top }.joinToString("\n") { entries[it].node.text.toString().trim() }
             if (text.isNotEmpty()) return text
-            val desc = entries[index].node.contentDescription?.toString().orEmpty()
+            val descriptions = buildList {
+                entries[index].node.contentDescription?.toString()?.trim()?.takeIf { it.isNotBlank() }?.let(::add)
+                entries.indices
+                    .filter { it != index && inside(it, index) && entries[it].visible && !entries[it].blocked }
+                    .mapNotNull { entries[it].node.contentDescription?.toString()?.trim() }
+                    .filter { it.isNotBlank() }
+                    .forEach(::add)
+            }
+            val desc = descriptions.firstOrNull().orEmpty()
+            val viewId = entries[index].node.viewIdResourceName
+            if (viewId == STICKER_ID) {
+                // WeChat uses the same bkm id for image media and custom stickers.
+                // An ancestor labelled "图片" is a media placeholder; otherwise
+                // keep the sticker as a low-confidence, unnamed affect cue.
+                var ancestor = entries[index].parent
+                var ancestorDescription = ""
+                while (ancestor >= 0) {
+                    ancestorDescription = entries[ancestor].node.contentDescription?.toString()?.trim().orEmpty()
+                    if (ancestorDescription.isNotBlank()) break
+                    ancestor = entries[ancestor].parent
+                }
+                if (ancestorDescription.contains("图片") ||
+                    ancestorDescription.equals("image", ignoreCase = true)) return "[图片]"
+            }
             return when {
                 desc.contains("图片") -> "[图片]"
                 desc.contains("文件") -> "[文件]"
                 desc.contains("语音") -> "[语音]"
                 desc.contains("视频") -> "[视频]"
+                desc.contains("表情") -> "[表情]"
+                desc.contains("头像") -> ""
+                desc.isNotBlank() && desc.length <= 24 -> "[表情:${desc.take(20)}]"
+                viewId == STICKER_ID -> "[表情:未命名贴纸]"
                 else -> ""
             }
         }
-        val known = entries.indices.filter { entries[it].node.viewIdResourceName == BUBBLE_ID && entries[it].visible && !entries[it].blocked }
+        val known = entries.indices.filter {
+            entries[it].node.viewIdResourceName in setOf(BUBBLE_ID, STICKER_ID) &&
+                entries[it].visible && !entries[it].blocked
+        }
         val candidates = known.toMutableList()
         val inputs = entries.filter { it.visible && it.node.isEditable && it.bounds.top > viewport.top + viewport.height() * .35 }
         val lists = entries.indices.filter { i ->
@@ -101,17 +131,45 @@ class WeChatAdapter {
         }
         val selected = candidates.distinct().filter { item -> candidates.none { other -> other != item && inside(item, other) } }
         val titleLimit = viewport.top + minOf((140 * density).toInt(), viewport.height() / 4)
-        val titleEntry = entries.filterIndexed { index, e ->
-            val text = e.node.text?.toString()?.trim().orEmpty()
-            e.visible && !e.blocked && text.isNotEmpty() && text.length <= 120 && ChatDateParser.parse(text) == null &&
+        val actionBar = entries.filter { e ->
+            e.visible && !e.blocked && e.node.viewIdResourceName in ACTION_BAR_IDS &&
+                e.bounds.top <= viewport.top + (24 * density).toInt() + 160
+        }.maxByOrNull { it.bounds.bottom - it.bounds.top }
+        val actionBarTop = actionBar?.bounds?.top ?: viewport.top
+        val actionBarBottom = actionBar?.bounds?.bottom ?: titleLimit
+
+        fun textValue(entry: Entry): String =
+            entry.node.text?.toString()?.trim().orEmpty().ifBlank {
+                entry.node.contentDescription?.toString()?.trim().orEmpty()
+            }
+
+        fun isPromotionalLabel(value: String): Boolean =
+            PROMOTIONAL_LABEL.containsMatchIn(value)
+
+        // Recent WeChat builds expose the ActionBar title as `obn`; the older
+        // generic scan could instead select a "本地热搜头条" banner below it.
+        val exactTitleEntry = entries.filterIndexed { index, e ->
+            val text = textValue(e)
+            e.visible && !e.blocked && e.node.viewIdResourceName in TITLE_IDS &&
+                text.isNotEmpty() && text.length <= 120 &&
+                ChatDateParser.parse(text) == null && selected.none { inside(index, it) } &&
+                e.bounds.top >= actionBarTop && e.bounds.bottom <= actionBarBottom
+        }.maxWithOrNull(compareBy<Entry> { it.bounds.top }.thenByDescending { it.bounds.width() })
+
+        val titleEntry = exactTitleEntry ?: entries.filterIndexed { index, e ->
+            val text = textValue(e)
+            e.visible && !e.blocked && text.isNotEmpty() && text.length <= 120 &&
+                ChatDateParser.parse(text) == null &&
                 text !in listOf("返回", "微信", "搜索", "聊天信息", "更多") &&
-                selected.none { inside(index, it) } && e.bounds.bottom < titleLimit &&
+                !isPromotionalLabel(text) && selected.none { inside(index, it) } &&
+                e.bounds.top >= actionBarTop && e.bounds.bottom <= actionBarBottom &&
                 e.bounds.centerX() in (viewport.left + viewport.width() / 4)..(viewport.right - viewport.width() / 5)
         }.minWithOrNull(compareBy<Entry> { it.bounds.top }.thenByDescending { it.bounds.width() })
-        val title = titleEntry?.node?.text?.toString()?.trim()
-        val actionBarBottom = titleEntry?.bounds?.bottom ?: titleLimit
+
+        // A single visible sender can still be a group member, not the chat name.
+        val title = titleEntry?.let(::textValue)?.takeUnless(::isTruncatedTitle)
         val structural = selected.size - known.size
-        if (selected.isEmpty() || (known.isEmpty() && title.isNullOrBlank()))
+        if (selected.isEmpty())
             return ChatInspection(null, entries.size, known.size, 0, if (entries.size <= 2) "微信未开放可读节点" else "未确认聊天气泡，可能不是聊天页或当前版本不兼容")
         val bubbles = selected.mapNotNull { index ->
             val e = entries[index]
@@ -141,7 +199,13 @@ class WeChatAdapter {
             val stamp = separators.filter { (rect, _) -> rect.bottom <= entries[b.index].bounds.top }
                 .maxByOrNull { it.first.bottom }?.second
             Msg(b.side, b.text, b.sender, stamp?.epochMillis,
-                when (b.text) { "[图片]" -> MessageType.IMAGE; "[文件]" -> MessageType.FILE; "[语音]", "[视频]" -> MessageType.UNKNOWN; else -> MessageType.TEXT },
+                when {
+                    b.text == "[图片]" -> MessageType.IMAGE
+                    b.text.startsWith("[表情") -> MessageType.STICKER
+                    b.text == "[文件]" -> MessageType.FILE
+                    b.text == "[语音]" || b.text == "[视频]" -> MessageType.UNKNOWN
+                    else -> MessageType.TEXT
+                },
                 Regex("@[^\\s:：,，。！？]+").findAll(b.text).map { it.value }.distinct().toList(),
                 stamp?.day?.toString(), stamp?.label)
         }
@@ -162,5 +226,22 @@ class WeChatAdapter {
         return ChatInspection(ChatSnapshot(title, messages, pkg), entries.size, known.size, structural.coerceAtLeast(0), reason, scroll, ocrRegions)
     }
 
-    companion object { private const val BUBBLE_ID = "com.tencent.mm:id/bkl" }
+    companion object {
+        private const val BUBBLE_ID = "com.tencent.mm:id/bkl"
+        private const val STICKER_ID = "com.tencent.mm:id/bkm"
+        private val TITLE_IDS = setOf("com.tencent.mm:id/obn", "android:id/text1")
+        private val ACTION_BAR_IDS = setOf(
+            "com.tencent.mm:id/ei",
+            "com.tencent.mm:id/ef",
+            "com.tencent.mm:id/cob",
+            "com.tencent.mm:id/gp",
+            "com.tencent.mm:id/obq"
+        )
+        private val PROMOTIONAL_LABEL = Regex(
+            "热搜|头条|广告|推荐|推广|点击|本地热|地点\\s*[:：]|优惠|商城|直播|小程序",
+            RegexOption.IGNORE_CASE
+        )
+        private val ELLIPSIS = Regex("\\.(?:\\s*\\.){2,}")
+        internal fun isTruncatedTitle(value: String): Boolean = value.contains('…') || ELLIPSIS.containsMatchIn(value)
+    }
 }

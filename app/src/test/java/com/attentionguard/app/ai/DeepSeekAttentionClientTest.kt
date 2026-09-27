@@ -54,7 +54,8 @@ class DeepSeekAttentionClientTest {
     @Test fun requestContainsOnlyLastTwelveBoundedMessagesAndContext() {
         val connection = FakeConnection(response())
         val messages = (0..15).map { Msg("other", "$it:" + "x".repeat(2100)) }
-        client(connection).enrich(snapshot.copy(messages = messages), base, "c".repeat(2200))
+        client(connection).enrich(snapshot.copy(messages = messages),
+            base.copy(evidence = messages.map { it.text.take(500) }), "c".repeat(2200))
         val body = JSONObject(connection.request.toString("UTF-8"))
         assertEquals("test-model", body.getString("model"))
         assertEquals("json_object", body.getJSONObject("response_format").getString("type"))
@@ -66,6 +67,17 @@ class DeepSeekAttentionClientTest {
         assertEquals(2000, captured.getJSONObject(0).getString("text").length)
         assertEquals(2000, user.getString("context").length)
         assertFalse(body.toString().contains("test-key"))
+    }
+
+    @Test fun independentNoticesAreExcludedFromTheSelectedEventRequest() {
+        val connection = FakeConnection(response())
+        val selected = "Please submit"
+        client(connection).enrich(snapshot.copy(messages = snapshot.messages + Msg("other", "Another unrelated meeting")),
+            base.copy(evidence = listOf(selected)), "")
+        val body = JSONObject(connection.request.toString("UTF-8"))
+        val user = JSONObject(body.getJSONArray("messages").getJSONObject(1).getString("content"))
+        assertEquals(1, user.getJSONArray("messages").length())
+        assertEquals(selected, user.getJSONArray("messages").getJSONObject(0).getString("text"))
     }
 
     @Test fun validatedEmptyOptionalFieldsClearHeuristicGuesses() {

@@ -20,6 +20,7 @@ import com.google.android.material.textfield.TextInputLayout
 import com.attentionguard.app.core.*
 import com.attentionguard.app.ai.DeepSeekAttentionClient
 import com.attentionguard.app.ui.GuardUi
+import com.attentionguard.app.ui.GuardMotion
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
 
@@ -54,19 +55,17 @@ class SettingsActivity : AppCompatActivity() {
         val shell = ui.boundedColumn()
         root.addView(shell, FrameLayout.LayoutParams(-1, -1, Gravity.CENTER_HORIZONTAL))
         shell.addView(ui.row().apply {
-            setBackgroundColor(ui.surface)
+            setBackgroundColor(ui.background)
             setPadding(ui.dp(8), ui.dp(8), ui.dp(16), ui.dp(8))
             addView(ui.iconButton(R.drawable.ag_arrow_left, "返回") { leave() })
-            addView(ui.text("设置", R.dimen.ag_type_heading, bold = true), LinearLayout.LayoutParams(0, -2, 1f))
-            addView(ui.brandMark(36))
+            addView(ui.text("规则与外观", R.dimen.ag_type_heading, bold = true), LinearLayout.LayoutParams(0, -2, 1f))
         })
         val body = ui.column().apply { setPadding(ui.dp(20), ui.dp(20), ui.dp(20), ui.dp(24)) }
         shell.addView(ui.scroll(body), LinearLayout.LayoutParams(-1, 0, 1f))
-        body.addView(ui.text("DeepSeek", R.dimen.ag_type_title, bold = true))
-        body.addView(ui.text("api.deepseek.com", R.dimen.ag_type_label, ui.sub).apply { layoutParams = ui.lp(8) })
-        cloud = toggle("联网增强", prefs.cloudEnabled, R.id.ag_cloud)
-        body.addView(cloud)
-        body.addView(ui.text("启用后，将向 DeepSeek 发送命中规则的当前会话名称、最近 12 条可见消息及群聊语境。关闭后仅在本机整理。", R.dimen.ag_type_label, ui.sub))
+        val cloudSection = ui.panel().apply { layoutParams = ui.lp(12) }
+        cloud = ui.toggle("DeepSeek 联网增强", prefs.cloudEnabled, R.id.ag_cloud)
+        cloudSection.addView(cloud)
+        cloudSection.addView(ui.text("默认本地运行。启用后，将向 DeepSeek 发送命中规则的当前会话名称、最近 12 条可见消息及群聊语境。", R.dimen.ag_type_label, ui.sub))
 
         val keyField = ui.field("API Key", prefs.deepSeekKey, InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD, R.id.ag_key)
         keyBox = keyField.first
@@ -74,50 +73,56 @@ class SettingsActivity : AppCompatActivity() {
         keyBox.endIconMode = TextInputLayout.END_ICON_PASSWORD_TOGGLE
         keyBox.setEndIconContentDescription("显示或隐藏密钥")
         keyBox.helperText = if (prefs.keyUnavailable) "本机密钥无法解密，请重新填写。" else "使用 Android Keystore 加密保存在本机"
-        body.addView(keyBox)
+        cloudSection.addView(keyBox)
         val modelField = ui.field("模型名称", prefs.deepSeekModel, InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS, R.id.ag_model)
         modelBox = modelField.first
         model = modelField.second.apply { setSingleLine() }
         modelBox.helperText = "默认 ${Prefs.DEFAULT_DEEPSEEK_MODEL}"
-        body.addView(modelBox)
+        cloudSection.addView(modelBox)
         result = ui.text("尚未测试", R.dimen.ag_type_label, ui.sub).apply {
-            minHeight = ui.dp(56)
+            minHeight = ui.dp(40)
             gravity = Gravity.CENTER_VERTICAL
             accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
             layoutParams = ui.lp(12)
         }
-        body.addView(result)
+        cloudSection.addView(result)
         test = ui.button("测试连接", R.drawable.ag_wifi, false) {
             if (testing) cancelTesting("测试已取消，可重新测试") else confirmTest()
         }
-        body.addView(test)
-        body.addView(ui.divider(24))
-        body.addView(ui.heading("观测规则"))
+        cloudSection.addView(test)
+        body.addView(ui.text("WeChat 观测规则", R.dimen.ag_type_title, bold = true))
+        body.addView(ui.text("设定范围，让重要的消息浮上来。", R.dimen.ag_type_label, ui.sub).apply { layoutParams = ui.lp(8) })
+        val rulesSection = ui.panel().apply { layoutParams = ui.lp(18) }
         val contextField = ui.field("群聊语境", prefs.relationship, InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE, R.id.ag_context)
         context = contextField.second.apply { minLines = 2; gravity = Gravity.TOP }
-        body.addView(contextField.first)
+        rulesSection.addView(contextField.first)
         val scopeField = ui.field("会话关键词", prefs.whitelist.sorted().joinToString("\n"), InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE, R.id.ag_whitelist)
         whitelist = scopeField.second.apply { minLines = 2; gravity = Gravity.TOP }
         scopeField.first.helperText = "每行一个；留空表示所有当前会话"
-        body.addView(scopeField.first)
-        auto = toggle("自动整理可见新消息", prefs.autoAnalyze, R.id.ag_auto)
-        body.addView(auto)
-        body.addView(ui.divider(24))
+        rulesSection.addView(scopeField.first)
+        auto = ui.toggle("自动整理可见新消息", prefs.autoAnalyze, R.id.ag_auto)
+        rulesSection.addView(auto)
+        body.addView(rulesSection)
         body.addView(ui.heading("悬浮卡片"))
-        val opacityLabel = ui.text("背景不透明度 · ${prefs.overlayOpacity.coerceAtLeast(96)}%", R.dimen.ag_type_label, ui.sub).apply { layoutParams = ui.lp(16) }
-        body.addView(opacityLabel)
+        val appearance = ui.panel().apply { layoutParams = ui.lp(12) }
+        val opacityLabel = ui.text("背景不透明度 · ${prefs.overlayOpacity}%", R.dimen.ag_type_label, ui.sub).apply { layoutParams = ui.lp(16) }
+        appearance.addView(ui.text("保留文字清晰，只改变卡片背景。", R.dimen.ag_type_label, ui.sub))
+        appearance.addView(opacityLabel)
         opacity = SeekBar(this).apply {
             id = R.id.ag_opacity
-            max = 4; progress = prefs.overlayOpacity.coerceAtLeast(96) - 96
+            max = 100; progress = prefs.overlayOpacity
             contentDescription = "悬浮卡片不透明度"
             minHeight = ui.dp(48)
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(bar: SeekBar?, value: Int, fromUser: Boolean) { opacityLabel.text = "背景不透明度 · ${value + 96}%" }
+                override fun onProgressChanged(bar: SeekBar?, value: Int, fromUser: Boolean) { opacityLabel.text = "背景不透明度 · $value%" }
                 override fun onStartTrackingTouch(bar: SeekBar?) = Unit
                 override fun onStopTrackingTouch(bar: SeekBar?) = Unit
             })
         }
-        body.addView(opacity)
+        appearance.addView(opacity)
+        body.addView(appearance)
+        body.addView(ui.heading("可选增强"))
+        body.addView(cloudSection)
         shell.addView(ui.column().apply {
             setBackgroundColor(ui.surface)
             setPadding(ui.dp(20), ui.dp(12), ui.dp(20), ui.dp(12))
@@ -125,19 +130,10 @@ class SettingsActivity : AppCompatActivity() {
         })
         original = values()
         ui.install(this, root)
+        GuardMotion.revealRows(body)
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() = leave()
         })
-    }
-
-    private fun toggle(label: String, checked: Boolean, viewId: Int) = SwitchCompat(this).apply {
-        id = viewId
-        text = label
-        textSize = 15f
-        setTextColor(ui.ink)
-        minHeight = ui.dp(56)
-        isChecked = checked
-        layoutParams = ui.lp(12)
     }
 
     private fun values(): List<Any> = listOf(key.text.toString().trim(), model.text.toString().trim(), context.text.toString(), whitelist.text.toString(), cloud.isChecked, auto.isChecked, opacity.progress)
@@ -166,7 +162,7 @@ class SettingsActivity : AppCompatActivity() {
             prefs.relationship = context.text.toString().trim().ifBlank { Prefs.DEFAULT_REL }
             prefs.whitelist = whitelist.text.toString().lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toSet()
             prefs.autoAnalyze = auto.isChecked
-            prefs.overlayOpacity = opacity.progress + 96
+            prefs.overlayOpacity = opacity.progress
             prefs.cloudEnabled = cloud.isChecked
         }.onSuccess {
             original = values()

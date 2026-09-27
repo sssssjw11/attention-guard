@@ -6,6 +6,7 @@ import android.os.Looper
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
+import android.widget.SeekBar
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.widget.SwitchCompat
 import com.google.android.material.bottomnavigation.BottomNavigationView
@@ -179,6 +180,117 @@ class ActivityFlowTest {
             shadowOf(Looper.getMainLooper()).idle()
             assertTrue(activity.isFinishing)
         } finally { controller.pause().stop().destroy() }
+    }
+
+    @Test fun opacitySliderSavesBothEndpoints() {
+        val controller = Robolectric.buildActivity(SettingsActivity::class.java).setup()
+        try {
+            val activity = controller.get()
+            val slider = activity.findViewById<SeekBar>(R.id.ag_opacity)
+            assertEquals(100, slider.max)
+            slider.progress = 0
+            button(activity, "保存设置").performClick()
+            assertEquals(0, Prefs(context).overlayOpacity)
+            slider.progress = 100
+            button(activity, "保存设置").performClick()
+            assertEquals(100, Prefs(context).overlayOpacity)
+        } finally { controller.pause().stop().destroy() }
+    }
+
+    @Test fun customIntentEntryAnalyzesLocallyWithoutCreatingAnEvent() {
+        val main = Robolectric.buildActivity(MainActivity::class.java).setup()
+        try {
+            val activity = main.get()
+            descendants(activity.window.decorView).first { it.contentDescription == "打开自定义意图分析" }.performClick()
+            assertEquals(CustomIntentActivity::class.java.name, shadowOf(activity).nextStartedActivity.component?.className)
+        } finally { main.pause().stop().destroy() }
+        val custom = Robolectric.buildActivity(CustomIntentActivity::class.java).setup()
+        try {
+            val activity = custom.get()
+            button(activity, "开始分析").performClick()
+            val input = activity.findViewById<TextInputEditText>(R.id.ag_custom_chat)
+            val field = descendants(activity.window.decorView).filterIsInstance<TextInputLayout>().first { it.editText == input }
+            assertEquals("请输入聊天内容", field.error.toString())
+            input.setText("我：这周有任务吗？\n对方：请在周五前提交报告")
+            button(activity, "开始分析").performClick()
+            assertTrue(texts(activity).contains("手动输入 · 本地规则"))
+            assertTrue(texts(activity).contains("可能在提出行动请求"))
+            assertTrue(texts(activity).any { it.contains("重要性 · 高") })
+            assertTrue(texts(activity).any { it.contains("语境置信度") })
+            assertTrue(EventStore(context).load().isEmpty())
+            input.append("\n对方：不用了")
+            assertFalse(texts(activity).contains("可能在提出行动请求"))
+        } finally { custom.pause().stop().destroy() }
+    }
+
+    @Test fun manualTitleConfirmationWritesRecognitionTerm() {
+        val intent = Intent(context, MarkChatActivity::class.java)
+            .putExtra(MarkChatActivity.EXTRA_SUGGESTED_TITLE, "Test group")
+        val controller = Robolectric.buildActivity(MarkChatActivity::class.java, intent).setup()
+        try {
+            val activity = controller.get()
+            assertEquals("Test group", activity.findViewById<TextInputEditText>(R.id.ag_mark_title).text.toString())
+            button(activity, "加入识别词条").performClick()
+            assertEquals(setOf("Test group"), Prefs(context).whitelist)
+            assertTrue(activity.isFinishing)
+        } finally { controller.pause().stop().destroy() }
+    }
+
+    @Test fun manualTitleShowsItsSourceAndRejectsAnUnfinishedName() {
+        val intent = Intent(context, MarkChatActivity::class.java)
+            .putExtra(MarkChatActivity.EXTRA_SUGGESTED_TITLE, "课程…群")
+            .putExtra(MarkChatActivity.EXTRA_TITLE_SOURCE, "微信聊天信息")
+        val controller = Robolectric.buildActivity(MarkChatActivity::class.java, intent).setup()
+        try {
+            val activity = controller.get()
+            assertTrue(texts(activity).contains("微信聊天信息 · 请核对"))
+            button(activity, "加入识别词条").performClick()
+            assertFalse(activity.isFinishing)
+            assertTrue(Prefs(context).whitelist.isEmpty())
+            activity.findViewById<TextInputEditText>(R.id.ag_mark_title).setText("课程通知群")
+            button(activity, "加入识别词条").performClick()
+            assertEquals(setOf("课程通知群"), Prefs(context).whitelist)
+        } finally { controller.pause().stop().destroy() }
+    }
+
+    @Test fun batchSelectionFitsNarrowScreenAndSelectsOnlyFilteredResults() {
+        RuntimeEnvironment.setQualifiers("w320dp-h800dp-mdpi")
+        RuntimeEnvironment.setFontScale(2f)
+        EventStore(context).upsertAll((1..24).map {
+            DemoAttentionData.events.first().copy(id = "batch-$it", title = if (it <= 22) "课程事件 $it" else "其他事件 $it")
+        })
+        val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
+        try {
+            val activity = controller.get()
+            descendants(activity.window.decorView).filterIsInstance<BottomNavigationView>().single().selectedItemId = R.id.ag_ledger
+            activity.findViewById<TextInputEditText>(R.id.ag_search).setText("课程事件")
+            button(activity, "批量归档").performClick()
+            val root = activity.window.decorView
+            fun measure() {
+                shadowOf(Looper.getMainLooper()).idle()
+                root.measure(View.MeasureSpec.makeMeasureSpec(320, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(800, View.MeasureSpec.EXACTLY))
+                root.layout(0, 0, 320, 800)
+            }
+            measure()
+            val all = descendants(root).filterIsInstance<android.widget.CheckBox>().first { it.text == "全选" }
+            val exit = descendants(root).first { it.contentDescription == "退出批量选择" }
+            val archive = descendants(root).first { it.contentDescription == "归档已选事件" }
+            for (view in listOf(all, exit, archive)) {
+                val parent = view.parent as View
+                assertTrue("Control has no width", view.width > 0)
+                assertTrue("Control clipped horizontally", view.left >= 0 && view.right <= parent.width)
+                assertTrue("Control too short", view.height >= 48)
+            }
+            assertFalse(archive.isEnabled)
+            all.performClick()
+            assertTrue(texts(activity).contains("22 个已选"))
+            descendants(root).first { it.contentDescription == "归档已选事件" }.performClick()
+            assertEquals(22, EventStore(context).load().count { it.archived })
+            assertEquals(2, EventStore(context).load().count { !it.archived })
+        } finally {
+            controller.pause().stop().destroy()
+            RuntimeEnvironment.setFontScale(1f)
+        }
     }
 
     @Test fun narrowLedgerKeepsFilterLabelsWithinMeasuredBoundsAtDoubleFontScale() {

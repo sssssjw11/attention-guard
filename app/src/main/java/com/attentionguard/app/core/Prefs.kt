@@ -2,6 +2,9 @@ package com.attentionguard.app.core
 
 import android.content.Context
 
+enum class CaptureMode(val label: String) { EVENT("事件监测"), INTENT("意图分析") }
+enum class OverlaySize { EXPANDED, COMPACT, BUBBLE }
+
 /**
  * App-private config store. Holds provider-specific keys and model choices, the
  * relationship description used for event extraction, and the conversation whitelist.
@@ -9,6 +12,8 @@ import android.content.Context
  * Active DeepSeek credentials are encrypted with an Android Keystore key.
  */
 class Prefs(context: Context) {
+
+    enum class RecognitionTermResult { ADDED_FIRST, ADDED, EXISTS }
 
     private val sp = context.getSharedPreferences("attention_guard", Context.MODE_PRIVATE)
 
@@ -74,18 +79,43 @@ class Prefs(context: Context) {
      * set means "all conversations". Stored as a plain string set.
      */
     var whitelist: Set<String>
-        get() = sp.getStringSet(K_WHITELIST, emptySet()) ?: emptySet()
-        set(v) = sp.edit().putStringSet(K_WHITELIST, v).apply()
+        get() = sp.getStringSet(K_WHITELIST, emptySet())?.toSet() ?: emptySet()
+        set(v) = synchronized(WHITELIST_LOCK) { sp.edit().putStringSet(K_WHITELIST, v.toSet()).apply() }
 
-    /** Overlay panel opacity, 60..100 (%). Lower lets the chat show through. */
+    fun addRecognitionTerm(title: String): RecognitionTermResult {
+        val term = title.trim()
+        require(term.isNotEmpty() && term.length <= 120)
+        return synchronized(WHITELIST_LOCK) {
+            val current = whitelist
+            if (current.any { ConversationScope.equivalent(it, term) }) RecognitionTermResult.EXISTS
+            else {
+                check(sp.edit().putStringSet(K_WHITELIST, current + term).commit()) { "识别词条保存失败" }
+                if (current.isEmpty()) RecognitionTermResult.ADDED_FIRST else RecognitionTermResult.ADDED
+            }
+        }
+    }
+
+    /** Overlay background opacity, 0..100 (%); controls and text stay opaque. */
     var overlayOpacity: Int
-        get() = sp.getInt(K_OPACITY, 92).coerceIn(60, 100)
-        set(v) = sp.edit().putInt(K_OPACITY, v.coerceIn(60, 100)).apply()
+        get() = sp.getInt(K_OPACITY, 92).coerceIn(0, 100)
+        set(v) = sp.edit().putInt(K_OPACITY, v.coerceIn(0, 100)).apply()
 
     /** Keep the WeChat-side card collapsed between captures. */
     var overlayCollapsed: Boolean
-        get() = sp.getBoolean(K_COLLAPSED, false)
-        set(v) = sp.edit().putBoolean(K_COLLAPSED, v).apply()
+        get() = overlaySize != OverlaySize.EXPANDED
+        set(v) { overlaySize = if (v) OverlaySize.COMPACT else OverlaySize.EXPANDED }
+
+    var overlaySize: OverlaySize
+        get() = sp.getString(K_OVERLAY_SIZE, null)?.let { saved ->
+            runCatching { OverlaySize.valueOf(saved) }.getOrNull()
+        } ?: if (sp.getBoolean(K_COLLAPSED, false)) OverlaySize.COMPACT else OverlaySize.EXPANDED
+        set(v) = sp.edit().putString(K_OVERLAY_SIZE, v.name).putBoolean(K_COLLAPSED, v != OverlaySize.EXPANDED).apply()
+
+    /** The WeChat overlay stays in this mode until the user switches it. */
+    var captureMode: CaptureMode
+        get() = runCatching { CaptureMode.valueOf(sp.getString(K_CAPTURE_MODE, CaptureMode.EVENT.name).orEmpty()) }
+            .getOrDefault(CaptureMode.EVENT)
+        set(v) = sp.edit().putString(K_CAPTURE_MODE, v.name).apply()
 
     /** Remembered vertical position of the bubble (px); -1 = default. */
     var bubbleY: Int
@@ -106,7 +136,7 @@ class Prefs(context: Context) {
         val wl = whitelist
         if (wl.isEmpty()) return true
         if (title == null) return false
-        return wl.any { title.contains(it) }
+        return wl.any { ConversationScope.matches(title, it) }
     }
 
     fun activeKey(): String = deepSeekKey
@@ -117,6 +147,7 @@ class Prefs(context: Context) {
 
     companion object {
         private val KEY_LOCK = Any()
+        private val WHITELIST_LOCK = Any()
         private const val K_KEY = "openrouter_key"
         private const val K_REPLY_MODEL = "reply_model"
         private const val K_API_PROVIDER = "api_provider"
@@ -128,6 +159,8 @@ class Prefs(context: Context) {
         private const val K_OPACITY = "overlay_opacity"
         private const val K_BUBBLE_Y = "bubble_y"
         private const val K_COLLAPSED = "overlay_collapsed"
+        private const val K_OVERLAY_SIZE = "overlay_size"
+        private const val K_CAPTURE_MODE = "capture_mode"
         private const val K_BUBBLE_X = "bubble_x"
         private const val K_AUTO = "auto_analyze"
 

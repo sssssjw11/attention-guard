@@ -51,6 +51,45 @@ class WeChatAdapterTest {
         assertTrue(shadowOf(later).performedActions.isEmpty())
     }
 
+    @Test fun actionBarTitleWinsOverPromotionalBannerText() {
+        val root = node()
+        val actionBar = node(bounds = Rect(0, 0, 360, 150), id = "com.tencent.mm:id/ei")
+        child(root, actionBar)
+        child(actionBar, node("测试联系人", Rect(120, 45, 240, 90), id = "com.tencent.mm:id/obn"))
+        child(root, node("本地热搜头条", Rect(80, 165, 300, 210)))
+        child(root, bubble("你上去一个"))
+        assertEquals("测试联系人", adapter.extract(root, resources)!!.title)
+    }
+
+    @Test fun repeatedAvatarOfOneGroupSpeakerMustNotBecomeTheChatTitle() {
+        val root = node()
+        child(root, node(bounds = Rect(0, 0, 360, 150), id = "com.tencent.mm:id/ei"))
+        repeat(2) { index ->
+            val row = node(bounds = Rect(0, 220 + index * 100, 360, 300 + index * 100))
+            child(root, row)
+            child(row, node(bounds = Rect(8, 225 + index * 100, 48, 265 + index * 100))
+                .apply { contentDescription = "测试联系人头像" })
+            child(row, bubble(if (index == 0) "你上去一个" else "可爱不", 220 + index * 100))
+        }
+        val result = adapter.inspect(root, resources)
+        assertNull(result.snapshot!!.title)
+        assertEquals(2, result.snapshot!!.messages.size)
+        assertTrue(result.reason.contains("名称未确认"))
+    }
+
+    @Test fun distinctAvatarLabelsDoNotBecomeAGroupTitle() {
+        val root = node()
+        child(root, node(bounds = Rect(0, 0, 360, 150), id = "com.tencent.mm:id/ei"))
+        repeat(2) { index ->
+            val row = node(bounds = Rect(0, 220 + index * 100, 360, 300 + index * 100))
+            child(root, row)
+            child(row, node(bounds = Rect(8, 225 + index * 100, 48, 265 + index * 100))
+                .apply { contentDescription = if (index == 0) "甲头像" else "乙头像" })
+            child(row, bubble("普通消息", 220 + index * 100))
+        }
+        assertNull(adapter.inspect(root, resources).snapshot!!.title)
+    }
+
     @Test fun rejectsOtherPackagesEmptyRootsAndOffscreenRoots() {
         for (root in listOf(node(pkg = "other.app"), node(bounds = Rect()), node(bounds = Rect(0, 810, 360, 900)))) {
             child(root, bubble("Not readable"))
@@ -115,6 +154,46 @@ class WeChatAdapterTest {
         assertEquals("[\u56fe\u7247]", message.text)
     }
 
+    @Test fun stickerDescriptionIsPreservedAsASeparateLowConfidenceCue() {
+        val root = node()
+        child(root, bubble("").apply { contentDescription = "呜哇" })
+        val message = adapter.extract(root, resources)!!.messages.single()
+        assertEquals(MessageType.STICKER, message.type)
+        assertEquals("[表情:呜哇]", message.text)
+    }
+
+    @Test fun nestedStickerDescriptionIsPreservedFromTheBubbleContainer() {
+        val root = node()
+        val bubble = bubble("")
+        child(bubble, node(bounds = Rect(30, 220, 160, 350)).apply { contentDescription = "呜哇" })
+        child(root, bubble)
+        val message = adapter.extract(root, resources)!!.messages.single()
+        assertEquals(MessageType.STICKER, message.type)
+        assertEquals("[表情:呜哇]", message.text)
+    }
+
+    @Test fun bkmStickerContainerIsCapturedAsAStickerCue() {
+        val root = node()
+        val sticker = node(bounds = Rect(30, 220, 180, 360), id = "com.tencent.mm:id/bkm")
+        child(sticker, node(bounds = Rect(30, 220, 180, 360)).apply { contentDescription = "呜哇" })
+        child(root, sticker)
+        val message = adapter.extract(root, resources)!!.messages.single()
+        assertEquals(MessageType.STICKER, message.type)
+        assertEquals("[表情:呜哇]", message.text)
+    }
+
+    @Test fun unnamedBkmStickerGetsLowConfidencePlaceholderButImageKeepsMediaType() {
+        val root = node()
+        val sticker = node(bounds = Rect(30, 220, 180, 360), id = "com.tencent.mm:id/bkm")
+        child(root, sticker)
+        val imageParent = node(bounds = Rect(190, 220, 340, 360)).apply { contentDescription = "图片" }
+        child(imageParent, node(bounds = Rect(190, 220, 340, 360), id = "com.tencent.mm:id/bkm"))
+        child(root, imageParent)
+        val messages = adapter.extract(root, resources)!!.messages
+        assertEquals(listOf("[表情:未命名贴纸]", "[图片]"), messages.map { it.text })
+        assertEquals(listOf(MessageType.STICKER, MessageType.IMAGE), messages.map { it.type })
+    }
+
     @Test fun readsNestedBubbleBodyAndLongGroupTitles() {
         val root = node()
         val title = "A group name longer than twenty four characters (128)"
@@ -142,6 +221,20 @@ class WeChatAdapterTest {
         assertEquals(list, result.scrollTarget)
         assertEquals(listOf("Version changed message"), result.snapshot!!.messages.map { it.text })
         assertTrue(shadowOf(body).performedActions.isEmpty())
+    }
+
+    @Test fun structuralBubbleWithoutReadableTitleStillSupportsContentOnlyAnalysis() {
+        val root = node()
+        child(root, node("Draft", Rect(50, 720, 300, 772)).apply { isEditable = true })
+        val list = node(bounds = Rect(0, 100, 360, 700)).apply { isScrollable = true }
+        val row = node(bounds = Rect(0, 190, 360, 280))
+        child(root, list); child(list, row)
+        child(row, node(bounds = Rect(5, 210, 45, 250)).apply { contentDescription = "同学头像" })
+        child(row, node("明天之前可以吗？", Rect(55, 220, 260, 275)).apply { isLongClickable = true })
+        val result = adapter.inspect(root, resources)
+        assertEquals(1, result.structuralBubbles)
+        assertNull(result.snapshot?.title)
+        assertEquals("明天之前可以吗？", result.snapshot?.messages?.single()?.text)
     }
 
     @Test fun searchAndContactListsCannotTriggerFallbackOrOcr() {
@@ -185,5 +278,16 @@ class WeChatAdapterTest {
         child(root, node("Synthetic group", Rect(100, 35, 250, 62)))
         child(root, node("Long visible message", Rect(30, -100, 300, 420), "com.tencent.mm:id/bkl"))
         assertEquals("Synthetic group", adapter.inspect(root, resources).snapshot!!.title)
+    }
+
+    @Test fun androidToolbarTextIsAcceptedButTruncatedNamesRequireConfirmation() {
+        for (title in listOf("课程通知群(93)", "课程…通知群(93)", "课程. ..通知群(93)")) {
+            val root = node()
+            val toolbar = node(bounds = Rect(0, 0, 360, 100), id = "com.tencent.mm:id/ei")
+            child(root, toolbar)
+            child(toolbar, node(title, Rect(100, 35, 280, 68), "android:id/text1"))
+            child(root, bubble("请在周三之前提交课程作业"))
+            assertEquals(if (title == "课程通知群(93)") title else null, adapter.inspect(root, resources).snapshot!!.title)
+        }
     }
 }

@@ -18,6 +18,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SwitchCompat
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.button.MaterialButtonToggleGroup
+import com.attentionguard.app.ui.GuardSegments
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
@@ -78,7 +79,7 @@ class CaptureActivity : AppCompatActivity() {
         val shell = ui.boundedColumn()
         root.addView(shell, FrameLayout.LayoutParams(-1, -1, Gravity.CENTER_HORIZONTAL))
         shell.addView(ui.row().apply {
-            setBackgroundColor(ui.surface); setPadding(ui.dp(8), ui.dp(8), ui.dp(8), ui.dp(8))
+            setBackgroundColor(ui.background); setPadding(ui.dp(8), ui.dp(8), ui.dp(8), ui.dp(8))
             addView(ui.iconButton(R.drawable.ag_arrow_left, "返回") { finish() })
             addView(ui.text("采集与回溯", R.dimen.ag_type_heading, bold = true), LinearLayout.LayoutParams(0, -2, 1f))
             addView(ui.iconButton(R.drawable.ag_rotate_ccw, "刷新诊断与记录") { updateStatus(); loadMessages(true) })
@@ -129,16 +130,14 @@ class CaptureActivity : AppCompatActivity() {
         }
         body.addView(diagnosticText)
         body.addView(ui.button("复制诊断", R.drawable.ag_notebook_tabs, false) {
-            val value = "Attention Guard ${BuildConfig.VERSION_NAME}\n" + CaptureDiagnostics(this).summary()
-            getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("Attention Guard 诊断", value))
+            val value = "${getString(R.string.app_name)} ${BuildConfig.VERSION_NAME}\n" + CaptureDiagnostics(this).summary()
+            getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("${getString(R.string.app_name)} 诊断", value))
             ui.feedback(body, "已复制，不含群名、消息正文或密钥")
         }.apply { layoutParams = ui.lp(12) })
         body.addView(ui.button("无障碍设置", R.drawable.ag_eye, false) {
             runCatching { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }.onFailure { ui.feedback(body, "系统页面不可用") }
         }.apply { layoutParams = ui.lp(8) })
-        body.addView(SwitchCompat(this).apply {
-            text = "本机 OCR 兜底"; textSize = 16f; setTextColor(ui.ink); minHeight = ui.dp(56)
-            isChecked = Prefs(this@CaptureActivity).localOcrEnabled
+        body.addView(ui.toggle("本机 OCR 兜底", Prefs(this).localOcrEnabled).apply {
             var updating = false
             setOnCheckedChangeListener { _, checked ->
                 if (updating) return@setOnCheckedChangeListener
@@ -233,19 +232,13 @@ class CaptureActivity : AppCompatActivity() {
     private fun buildRecords(): LinearLayout {
         val body = sectionBody()
         body.addView(ui.heading("消息记录"))
-        val modes = MaterialButtonToggleGroup(this).apply { id = R.id.ag_archive_modes; isSingleSelection = true; isSelectionRequired = true; layoutParams = ui.lp(12) }
-        listOf(R.id.ag_archive_all to "最近采集", R.id.ag_archive_history to "本次回溯").forEach { (id, label) ->
-            modes.addView(ui.button(label, primary = false) {}.apply { this.id = id; isCheckable = true }, LinearLayout.LayoutParams(0, -2, 1f))
+        val modes = GuardSegments(this, listOf(
+            GuardSegments.Option(R.id.ag_archive_all, "最近采集"),
+            GuardSegments.Option(R.id.ag_archive_history, "本次回溯")
+        ), if (historyOnly) R.id.ag_archive_history else R.id.ag_archive_all).apply {
+            id = R.id.ag_archive_modes; layoutParams = ui.lp(12)
         }
-        modes.check(if (historyOnly) R.id.ag_archive_history else R.id.ag_archive_all)
-        fun tintModes() {
-            for (i in 0 until modes.childCount) (modes.getChildAt(i) as MaterialButton).apply {
-                backgroundTintList = android.content.res.ColorStateList.valueOf(if (isChecked) ui.brand else ui.surface)
-                setTextColor(if (isChecked) ui.surface else ui.brand)
-            }
-        }
-        tintModes()
-        modes.addOnButtonCheckedListener { _, id, checked -> if (checked) { historyOnly = id == R.id.ag_archive_history; tintModes(); loadMessages(true) } }
+        modes.addOnButtonCheckedListener { _, id, checked -> if (checked) { historyOnly = id == R.id.ag_archive_history; loadMessages(true) } }
         body.addView(modes)
         archiveText = ui.text("", R.dimen.ag_type_label, ui.sub).apply { layoutParams = ui.lp(12); accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE }
         body.addView(archiveText)

@@ -20,6 +20,7 @@ enum class EventCategory(val label: String) {
     COURSE("课程"),
     EMPLOYMENT("就业"),
     COMPETITION("竞赛"),
+    MEETING("班会 / 会议"),
     ACTIVITY("活动")
 }
 

@@ -14,12 +14,14 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.widget.SwitchCompat
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.snackbar.Snackbar
+import com.google.android.material.progressindicator.LinearProgressIndicator
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
 import com.attentionguard.app.R
@@ -83,6 +85,7 @@ class GuardUi(val context: Context) {
         setPadding(dp(12), dp(12), dp(12), dp(12))
         layoutParams = LinearLayout.LayoutParams(dp(48), dp(48))
         selectable(this, android.graphics.Color.TRANSPARENT, null)
+        GuardMotion.bindPress(this)
         setOnClickListener { action() }
     }
 
@@ -91,6 +94,7 @@ class GuardUi(val context: Context) {
             text = label
             isAllCaps = false
             textSize = 14f
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
             letterSpacing = 0f
             minHeight = dp(48)
             minimumHeight = dp(48)
@@ -108,12 +112,13 @@ class GuardUi(val context: Context) {
             iconSize = dp(18)
             iconRes?.let { setIconResource(it) }
             layoutParams = lp()
+            GuardMotion.bindPress(this)
             setOnClickListener { action() }
         }
 
     fun navigationRow(iconRes: Int, title: String, subtitle: String, action: () -> Unit): View = row().apply {
-        minimumHeight = dp(76)
-        setPadding(dp(4), dp(14), dp(4), dp(14))
+        minimumHeight = dp(68)
+        setPadding(dp(4), dp(12), dp(4), dp(12))
         addView(icon(iconRes, brand))
         addView(column().apply {
             setPadding(dp(14), 0, dp(12), 0)
@@ -122,6 +127,36 @@ class GuardUi(val context: Context) {
         }, LinearLayout.LayoutParams(0, -2, 1f))
         addView(icon(R.drawable.ag_chevron_right, size = 18))
         accessibleAction(this, "$title，$subtitle", action)
+    }
+
+    fun panel(fill: Int = surface, border: Int? = line, padding: Int = 16) = column().apply {
+        background = shape(fill, border, 12)
+        setPadding(dp(padding), dp(padding), dp(padding), dp(padding))
+    }
+
+    fun quickAction(iconRes: Int, title: String, subtitle: String, accent: Boolean = false,
+                    action: () -> Unit): View = column().apply {
+        setPadding(dp(14), dp(14), dp(14), dp(14))
+        addView(icon(iconRes, brand, 24))
+        addView(text(title, R.dimen.ag_type_body, ink, true).apply { layoutParams = lp(10) })
+        addView(text(subtitle, R.dimen.ag_type_caption, sub).apply { layoutParams = lp(5) })
+        accessibleAction(this, "$title，$subtitle", action)
+        selectable(this, if (accent) color(R.color.ag_brand_soft) else surface, line)
+    }
+
+    fun toggle(label: String, checked: Boolean, viewId: Int = View.NO_ID) = SwitchCompat(context).apply {
+        id = viewId
+        text = label
+        setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, resources.getDimension(R.dimen.ag_type_body))
+        setTextColor(ink)
+        typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        minHeight = dp(56)
+        isChecked = checked
+        thumbTintList = ColorStateList(
+            arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()), intArrayOf(brand, sub))
+        trackTintList = ColorStateList(
+            arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()), intArrayOf(color(R.color.ag_brand_soft), line))
+        layoutParams = lp()
     }
 
     /** A non-interactive two-column status line used for live diagnostics. */
@@ -152,13 +187,6 @@ class GuardUi(val context: Context) {
         })
     }
 
-    fun metric(value: Int, label: String, tint: Int, action: () -> Unit): View = column().apply {
-        setPadding(dp(12), dp(12), dp(8), dp(12))
-        addView(text(value.toString(), R.dimen.ag_type_title, tint, true))
-        addView(text(label, R.dimen.ag_type_label, sub).apply { layoutParams = lp(6) })
-        accessibleAction(this, "$label，$value 个，查看列表", action)
-    }
-
     fun accessibleAction(view: ViewGroup, label: String, action: () -> Unit) {
         selectable(view, android.graphics.Color.TRANSPARENT, null)
         view.contentDescription = label
@@ -170,6 +198,7 @@ class GuardUi(val context: Context) {
             }
         }
         view.setOnClickListener { action() }
+        GuardMotion.bindPress(view)
     }
 
     fun badge(label: String, foreground: Int = brand, fill: Int = color(R.color.ag_brand_soft)) =
@@ -183,6 +212,29 @@ class GuardUi(val context: Context) {
         EventPriority.P1 -> color(R.color.ag_warning) to color(R.color.ag_warning_soft)
         EventPriority.P2 -> color(R.color.ag_info) to color(R.color.ag_info_soft)
         EventPriority.P3 -> color(R.color.ag_secondary) to color(R.color.ag_background)
+    }
+
+    fun confidence(label: String, score: Int, tint: Int = brand, labelTint: Int = sub,
+                   track: Int = line, size: Int = R.dimen.ag_type_label, previous: Int? = null) = column().apply {
+        val value = score.coerceIn(0, 100)
+        val level = if (value < 50) "低" else if (value < 75) "中" else "高"
+        addView(row().apply {
+            addView(text(label, size, labelTint), LinearLayout.LayoutParams(0, -2, 1f))
+            addView(text("$level $value%", size, tint, true).apply { fontFeatureSettings = "tnum" })
+        })
+        addView(LinearProgressIndicator(context).apply {
+            max = 100
+            trackThickness = dp(3)
+            trackCornerRadius = dp(2)
+            trackColor = track
+            setIndicatorColor(tint)
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            layoutParams = lp(5, dp(3))
+            progress = value
+            if (previous != null && previous != value) GuardMotion.progress(this) { t ->
+                progress = (previous + (value - previous) * t).roundToInt().coerceIn(0, 100)
+            }
+        })
     }
 
     fun divider(top: Int = 16) = View(context).apply { setBackgroundColor(line); layoutParams = lp(top, dp(1)) }
@@ -219,11 +271,11 @@ class GuardUi(val context: Context) {
     fun feedback(anchor: View, message: String) = Snackbar.make(anchor, message, Snackbar.LENGTH_SHORT).show()
 
     fun brandMark(size: Int = 40) = ImageView(context).apply {
-        setImageResource(R.drawable.ag_brand_orbit)
+        setImageResource(R.drawable.touxian_app_icon)
         scaleType = ImageView.ScaleType.FIT_CENTER
         background = shape(color(R.color.ag_graphite), null)
         clipToOutline = true
-        contentDescription = "Attention Guard"
+        contentDescription = "偷闲"
         layoutParams = LinearLayout.LayoutParams(dp(size), dp(size))
     }
 

@@ -30,12 +30,16 @@ class EventStore(context: Context) {
         }.getOrElse { readFailed = true; emptyList() }
     }
 
-    fun upsert(incoming: AttentionEvent): List<AttentionEvent> = synchronized(LOCK) {
+    fun upsert(incoming: AttentionEvent): List<AttentionEvent> = upsertAll(listOf(incoming))
+
+    fun upsertAll(incoming: List<AttentionEvent>): List<AttentionEvent> = synchronized(LOCK) {
         val current = load().toMutableList()
         check(!readFailed) { "本地记录暂时无法读取，未覆盖原数据" }
-        val index = current.indexOfFirst { it.id == incoming.id }
-        if (index >= 0) current[index] = merge(current[index], incoming) else current.add(0, incoming)
-        save(current)
+        incoming.forEach { event ->
+            val index = current.indexOfFirst { it.id == event.id }
+            if (index >= 0) current[index] = merge(current[index], event) else current.add(0, event)
+        }
+        if (incoming.isNotEmpty()) save(current)
         current
     }
 
@@ -49,8 +53,14 @@ class EventStore(context: Context) {
     }
 
     fun setArchived(id: String, archived: Boolean): List<AttentionEvent> = synchronized(LOCK) {
+        setArchived(setOf(id), archived)
+    }
+
+    fun setArchived(ids: Collection<String>, archived: Boolean): List<AttentionEvent> = synchronized(LOCK) {
+        if (ids.isEmpty()) return@synchronized load()
+        val selected = ids.toSet()
         val current = load().map { event ->
-            if (event.id != id) event else event.withArchive(archived)
+            if (event.id !in selected) event else event.withArchive(archived)
         }
         check(!readFailed) { "本地记录暂时无法读取，未覆盖原数据" }
         save(current)
@@ -123,13 +133,17 @@ class EventStore(context: Context) {
     }
 
     private fun fromJson(json: JSONObject): AttentionEvent {
-        for (field in listOf("id", "title", "sourceGroup")) {
+        for (field in listOf("id", "sourceGroup")) {
             val value = json.get(field)
             require(value is String && value.isNotBlank())
         }
+        // Early versions could strip a link-only title to "". Keep that record
+        // and all its evidence readable; a read must never rewrite the file.
+        val storedTitle = json.get("title")
+        require(storedTitle is String)
         return AttentionEvent(
             id = json.optString("id"),
-            title = json.optString("title"),
+            title = storedTitle.ifBlank { "未命名事项 · 请核对原文" },
             summary = json.optString("summary"),
             sourceGroup = json.optString("sourceGroup"),
             sourcePerson = json.optString("sourcePerson"),

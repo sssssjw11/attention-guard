@@ -2,10 +2,13 @@ package com.attentionguard.app.capture
 
 import android.accessibilityservice.AccessibilityService
 import android.graphics.Bitmap
+import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.view.Display
+import android.view.WindowInsets
+import android.view.WindowManager
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.TextRecognizer
@@ -88,6 +91,63 @@ class OnDeviceChatOcr(private val service: AccessibilityService, private val hid
                     }
                 })
             }.onFailure { complete(null, "系统不允许本次截屏") }
+        }, 250)
+    }
+
+    fun readVisibleTitle(stillCurrent: () -> Boolean, done: (String?, String) -> Unit) {
+        cancel()
+        val request = ++generation
+        fun complete(title: String?, reason: String) {
+            if (request != generation) return
+            generation++
+            main.removeCallbacksAndMessages(null)
+            hideOverlay(false)
+            val current = stillCurrent()
+            done(if (current) title else null, if (current) reason else "会话已变化")
+        }
+        main.postDelayed({ complete(null, "标题识别超时") }, 12_000)
+        hideOverlay(true)
+        main.postDelayed({
+            if (request != generation) return@postDelayed
+            if (!stillCurrent()) { complete(null, "会话已变化"); return@postDelayed }
+            runCatching {
+                service.takeScreenshot(Display.DEFAULT_DISPLAY, service.mainExecutor, object : AccessibilityService.TakeScreenshotCallback {
+                    override fun onFailure(errorCode: Int) { complete(null, "标题截屏不可用（$errorCode）") }
+                    override fun onSuccess(result: AccessibilityService.ScreenshotResult) {
+                        val buffer = result.hardwareBuffer
+                        val bitmap = try {
+                            val hardware = Bitmap.wrapHardwareBuffer(buffer, result.colorSpace)
+                            try { hardware?.copy(Bitmap.Config.ARGB_8888, false) } finally { hardware?.recycle() }
+                        } catch (_: Exception) { null } finally { buffer.close() }
+                        hideOverlay(false)
+                        if (bitmap == null) { complete(null, "标题画面不可用"); return }
+                        if (request != generation || !stillCurrent()) { bitmap.recycle(); complete(null, "会话已变化"); return }
+                        val insets = service.getSystemService(WindowManager::class.java).currentWindowMetrics.windowInsets
+                            .getInsetsIgnoringVisibility(WindowInsets.Type.statusBars())
+                        val top = insets.top.coerceIn(0, bitmap.height - 1)
+                        val bounds = Rect((bitmap.width * .17f).toInt(), top, (bitmap.width * .86f).toInt(),
+                            (top + 72 * service.resources.displayMetrics.density).toInt().coerceAtMost(bitmap.height))
+                        if (bounds.isEmpty) { bitmap.recycle(); complete(null, "标题区域不可用"); return }
+                        val crop = Bitmap.createBitmap(bitmap, bounds.left, bounds.top, bounds.width(), bounds.height())
+                        bitmap.recycle()
+                        runCatching {
+                            val engine = recognizer ?: TextRecognition.getClient(ChineseTextRecognizerOptions.Builder().build()).also { recognizer = it }
+                            engine.process(InputImage.fromBitmap(crop, 0))
+                                .addOnSuccessListener(service.mainExecutor) { recognized ->
+                                    val lines = recognized.textBlocks.flatMap { it.lines }
+                                        .filter { it.boundingBox?.centerY()?.let { y -> y < crop.height * .88 } ?: true }
+                                        .map { it.text.trim() }.filter { it.isNotEmpty() && it.length <= 120 }
+                                    val title = lines.filterNot { it.contains('…') || it.contains("...") }
+                                        .ifEmpty { lines }.maxByOrNull { it.length }
+                                    crop.recycle()
+                                    complete(title, if (title == null) "标题未能自动识别" else "本机标题识别完成")
+                                }.addOnFailureListener(service.mainExecutor) {
+                                    crop.recycle(); complete(null, "标题识别失败")
+                                }
+                        }.onFailure { crop.recycle(); complete(null, "标题识别无法初始化") }
+                    }
+                })
+            }.onFailure { complete(null, "系统不允许本次标题截屏") }
         }, 250)
     }
 

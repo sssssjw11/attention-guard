@@ -11,6 +11,8 @@ import android.os.Build
 import android.os.IBinder
 import com.attentionguard.app.CaptureActivity
 import com.attentionguard.app.R
+import com.attentionguard.app.core.CaptureMode
+import com.attentionguard.app.core.Prefs
 
 /**
  * A minimal foreground service whose only job is to keep the app process at
@@ -21,27 +23,35 @@ import com.attentionguard.app.R
  */
 class KeepAliveService : Service() {
 
+    private val channelId = "attention_guard_keepalive"
+
     override fun onCreate() {
         super.onCreate()
-        val channelId = "attention_guard_keepalive"
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val ch = NotificationChannel(channelId, "Attention Guard 观测中", NotificationManager.IMPORTANCE_MIN)
+            val ch = NotificationChannel(channelId, "偷闲观测中", NotificationManager.IMPORTANCE_MIN)
             ch.setShowBadge(false)
             nm.createNotificationChannel(ch)
         }
-        val notif: Notification = Notification.Builder(this, channelId)
-            .setContentTitle("Attention Guard 采集服务")
-            .setContentText("仅处理前台可见会话 · 点按查看运行诊断")
+        startForeground(1, notification())
+        CaptureDiagnostics(this).keepAlive(if (nm.areNotificationsEnabled()) "服务已启动" else "服务已启动，通知未授权或已关闭")
+    }
+
+    private fun notification(): Notification {
+        val intentMode = Prefs(this).captureMode == CaptureMode.INTENT
+        return Notification.Builder(this, channelId)
+            .setContentTitle(if (intentMode) "偷闲 · 意图分析" else "偷闲 · 事件监测")
+            .setContentText(if (intentMode) "仅分析前台可见语境，不保存消息" else "仅处理前台可见会话 · 点按查看运行诊断")
             .setSmallIcon(R.drawable.ag_radio)
             .setContentIntent(PendingIntent.getActivity(this, 0, Intent(this, CaptureActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
             .setOngoing(true)
             .build()
-        startForeground(1, notif)
-        CaptureDiagnostics(this).keepAlive(if (nm.areNotificationsEnabled()) "服务已启动" else "服务已启动，通知未授权或已关闭")
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        startForeground(1, notification())
+        return START_STICKY
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 

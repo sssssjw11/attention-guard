@@ -19,11 +19,13 @@ gradle.properties.local
 
 # Dev artifacts / reports (not part of the product)
 /_reports/
+/.tmp/
 /tools/report/
 /tools/__pycache__/
 **/__pycache__/
 *.pyc
 hs_err_pid*.log
+replay_pid*.log
 
 # OS
 .DS_Store
@@ -40,3 +42,4 @@ secrets.*
 *.jks
 *.keystore
 keystore.properties
+attention-guard-release.properties

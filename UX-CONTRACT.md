@@ -10,7 +10,7 @@ activities, `MessageArchive`, and `HistorySession`.
 |---|---|---|---|---|
 | Table Selection | Not applicable: no table widget in the native app | Android navigation and event-list contract | Event row tap only | Unit filtering + manual device check |
 | Select/Listbox | Not applicable: no select/listbox is exposed | Settings contract | Toggle, text field, seek bar | Unit validation + manual device check |
-| Date | Native Android `DatePickerDialog` in `CaptureActivity`; `ChatDateParser` for separators | Inclusive date-only `HistoryRange`, device timezone | Platform calendar for start/end; event labels remain display-only | ChatDateParser/HistorySession tests; manual calendar check pending |
+| Date | Native Android `DatePickerDialog` in `CaptureActivity` and `CalendarActivity`; `ChatDateParser` for separators | Inclusive date-only `HistoryRange`, device timezone; calendar draft is user-confirmed only | Platform calendar for start/end and explicit event preview; event labels remain display-only until confirmation | ChatDateParser/HistorySession/CalendarDraft tests; device calendar preview check |
 | Form | `GuardUi.field` + settings explicit-save + capture explicit-prepare | `DESIGN.md` and settings section below | DeepSeek save; history prepare then in-chat confirmation; OCR consent | ActivityFlow/CaptureActivity tests + lint |
 | Scrollbar | Android `ScrollView` platform owner | `GuardUi.scroll` and system theme | One vertical scroll surface per page | Build/lint + manual device check |
 | Toast | `GuardUi.feedback` Snackbar and overlay Toast | Shared feedback wording below | Snackbar in app, Toast over other apps | Unit/message review + manual device check |
@@ -21,6 +21,8 @@ activities, `MessageArchive`, and `HistorySession`.
 - `MainActivity` owns the four-tab shell, attention summary, ledger, sources, and
   profile/permission entry points.
 - `SettingsActivity` owns DeepSeek-only configuration and explicit save/cancel.
+- `CustomIntentActivity` owns transient, user-entered chat analysis. It does not
+  read a foreground app or write the event/message stores.
 - `CaptureActivity` owns diagnosis, raw-message paging, local OCR opt-in, and history preparation.
 - `AttentionOverlayController` owns the read-only cross-app card. It may open the
   app, expand a stored event, manually recognize the current WeChat chat, reset
@@ -33,11 +35,15 @@ activities, `MessageArchive`, and `HistorySession`.
 
 ## Event lifecycle
 
-1. A visible chat snapshot passes the local Attention Gate.
+1. A visible chat snapshot is separated into candidate notices and passes the
+   local Attention Gate. Useful information updates may become monitoring
+   records without being turned into mandatory tasks.
 2. If it is actionable, due, or high priority, the app may call DeepSeek when the
    user has enabled cloud enhancement and a usable encrypted key exists.
-3. The resulting event is merged by stable ID and stored locally with a bounded
-   timeline and original evidence.
+3. All accepted local events from the screen are merged by stable ID in one
+   `EventStore.upsertAll` write, with a bounded timeline and original evidence.
+   The overlay displays the highest-priority event, breaking ties by attention
+   score; the other events remain available in the ledger.
 4. The user can open detail, expand evidence, mark complete, restore the prior
    status, archive, or unarchive. Archive is a reversible flag independent of
    completion; archived items leave active filters and counters.
@@ -47,18 +53,58 @@ activities, `MessageArchive`, and `HistorySession`.
   time, conversation, sender and original evidence. Old records with no origin
   field display an unverified-source label rather than a fabricated origin.
 
-## Manual Intent Recognition
+## WeChat capture modes and intent analysis
 
-- The collapsed and expanded WeChat overlay can request a fresh read of the
-  current foreground conversation. The result opens expanded and shows the
-  latest visible incoming text, possible intent, next step, sender, capture time,
-  and local-rule provenance. It never writes or sends a reply.
+- The WeChat overlay selects `事件监测` (default) or `意图分析`; the selected mode
+  persists until changed manually. The collapsed mode icon and expanded
+  segmented control both allow switching. Entering intent mode opens the result
+  once, while later automatic updates respect a collapsed card.
+- Intent mode reads every currently visible, accessible text bubble, not only
+  the immediately preceding message. The latest readable counterpart turn is
+  the focus, with all visible turns available for context and follow-up cues.
+  The result shows a visible-text count, selected relevant excerpts, possible
+  intent, importance, context confidence, next step, capture time and source.
+  It updates on visible changes or a foreground poll without requiring a
+  recognized conversation title or collection keyword.
+- Intent mode does not archive messages, create event reminders, invoke the
+  cloud model or run history paging. An active history task and pending event
+  analysis are canceled on entry. Event monitoring resumes only when the user
+  switches back, without retroactive capture of intent-only screens. The
+  Android foreground-service status remains visible and reflects the mode.
 - The Jev-inspired intent reading is local heuristic guidance, not a call to an
-  online Jev model or a verified psychological conclusion. It does not run on
-  unconfirmed conversation text, OCR text, or during a history session.
-- A separately gated actionable event may be saved with manual origin. Manual
-  recognition does not require auto-analysis or invoke DeepSeek. A save failure
-  leaves the intent clue visible but never claims the related event was stored.
+  online Jev model or a verified psychological conclusion. Its confidence is
+  context-cue strength, not a calibrated probability. It does not infer intent
+  from unreadable bubbles or OCR body text and does not invoke DeepSeek.
+- The global custom page accepts free text, optionally using `我：`/`对方：`
+  (also `Me:`/`Them:`) turn prefixes. Unlabeled text is treated as counterpart
+  text; the latest counterpart turn and all supplied context are classified. If the
+  user replied afterward, the next step says to recheck whether action is still
+  needed. Neither mode requires a conversation name.
+  Empty or self-only input cannot produce an insight. The result is labeled
+  `手动输入 · 本地规则`; it never becomes a captured WeChat message or event,
+  invokes no cloud request, and is not saved by the app.
+
+## Current conversation marking
+
+- The WeChat overlay can mark the currently confirmed conversation from both
+  collapsed and expanded states. A tap performs a new foreground tree read;
+  cached titles and non-WeChat windows are not accepted.
+- If visible bubbles are confirmed but the title node is unavailable, the
+  explicit tap attempts one local header OCR pass, then opens a compact
+  editable confirmation page. The user may correct or enter a keyword before
+  saving. This does not turn on continuous background title screenshots.
+- The confirmed title is added once to the existing recognition keyword set.
+  A second tap is idempotent. When the prior set was empty (all conversations),
+  the first mark narrows monitoring to the new term and explicitly says so.
+  Existing terms are preserved. A blocked conversation is not stored as messages
+  before marking; a settings change then triggers a fresh capture.
+- The app cannot reliably establish whether a named conversation is a group or
+  a one-to-one chat from the visible title alone. Marking therefore applies to
+  the current confirmed WeChat conversation, and title keyword matching retains
+  its existing limitations for duplicate or substring-matching names. A
+  manually confirmed term alone cannot make title-inaccessible chats eligible
+  for automatic capture. One-shot in-chat analysis is independent of the title
+  and recognition keyword set.
 
 ## Navigation and state
 
@@ -82,7 +128,8 @@ activities, `MessageArchive`, and `HistorySession`.
 
 - The only visible provider is DeepSeek Official at `api.deepseek.com`.
 - Cloud enhancement is opt-in. It sends the current visible conversation name,
-  up to 12 visible messages (body capped at 2,000 characters each), associated
+  up to 12 visible messages matching the selected event's evidence (body capped
+  at 2,000 characters each), associated
   sender/side/mention metadata, up to 2,000 characters of user-entered context,
   the current time, and a preliminary local event title/priority/score.
 - API keys are encrypted with an Android Keystore AES-GCM key. Legacy plaintext is
@@ -94,6 +141,26 @@ activities, `MessageArchive`, and `HistorySession`.
 - Event evidence is private local JSON, not application-encrypted. Android backup
   is disabled. Completing an event does not delete its original evidence.
 - Leaving unsaved settings requires an app-owned confirmation dialog.
+- Overlay background opacity can be set from 0% to 100%; the control, text and
+  icons stay opaque at 0%. The existing 92% default is retained on upgrade.
+
+## Calendar Confirmation
+
+- `MainActivity` opens `CalendarActivity` from an event detail; opening the page
+  never writes to the system calendar.
+- The user must explicitly choose a date when the event label is missing or
+  ambiguous, may edit the title and reminder, and must select a writable calendar.
+  Absolute deadline labels are normalized locally; date-only labels default to
+  10:00 on that date and the reminder defaults to the start time.
+- The selected writable calendar is persisted as the next default. If it becomes
+  unavailable, the user must choose another calendar before confirming.
+- Only the foreground `确认并写入` action calls `CalendarWriter.confirm`.
+- `CalendarWriter` uses one provider batch for the event and optional reminder,
+  and stores a deterministic marker for idempotent retries.
+- Calendar permissions are requested at the calendar-selection step, not at app
+  startup. Denied permission, back navigation, and validation errors are
+  non-mutating.
+- The calendar event is independent from the app event's complete/archive state.
 
 ## Capture and privacy boundary
 
@@ -174,10 +241,22 @@ DeepSeek or used for automatic event creation. No geometry evidence means no OCR
   only the user may mark an event completed. Valid empty optional fields clear
   heuristic due/action/consequence guesses.
 
-## Priority Evidence (1.5)
+## Priority Evidence (1.19)
 
-- Select one actionable notice and only adjacent, explicit corrections from the
-  same known sender. This is conservative, not multi-topic semantic understanding.
+- Extract multiple independent notices from the visible screen. Meeting
+  announcements, meeting IDs and follow-up reminders may be grouped when they
+  have the same known sender, no conflicting known message dates, and no
+  conflicting parsed meeting times. Explicit corrections replace the deadline
+  evidence while retaining the original event identity.
+- Each accepted event has a type, summary, importance, suggested next step and
+  source evidence. Meetings use the separate `班会 / 会议` category. Academic or
+  recruitment information can be useful without an immediate action request;
+  it is displayed and retained with monitoring status.
+- Conditional exemptions such as "already submitted, no need to resubmit" do
+  not cancel an action required of other recipients. Acknowledgements, bare
+  mentions and ordinary questions do not create events on their own.
+- These are local wording and context rules calibrated against anonymized
+  regression samples, not a trained model or a guarantee of semantic coverage.
 - P0 requires action, a calendar-validated deadline within 24 hours, and a sender
   role or all-members signal. Sender labels are not verified identities.
 - P1 covers action with a future deadline or source/all-members signal; P2 covers
@@ -207,6 +286,9 @@ Browser E2E, CSS scrollbar assertions, HTML select popup tests, and web pixel
 regression are not applicable to this traditional Android View project. The
 replacement evidence is Gradle build, pure JVM and Robolectric tests, Android lint,
 APK metadata and resource inspection, plus the bounded real-device audit recorded
-in `docs/device-audit-1.5.md`. Untested configurations remain explicitly pending.
+in `docs/device-audit-1.5.md` and the installed-APK rule checks recorded in
+`docs/device-acceptance-1.19.md`. Installed-APK checks do not replace a WeChat UI
+pass; the 1.19 UI pass remains pending manual device unlock.
+Untested configurations remain explicitly pending.
 Robolectric layout measurements do not constitute screenshot or pixel verification.
 

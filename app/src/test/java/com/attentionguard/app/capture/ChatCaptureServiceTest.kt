@@ -1,6 +1,7 @@
 package com.attentionguard.app.capture
 
 import android.graphics.Rect
+import android.accessibilityservice.AccessibilityService
 import android.os.Looper
 import android.view.View
 import android.view.ViewGroup
@@ -9,9 +10,10 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import com.google.android.material.button.MaterialButton
 import com.attentionguard.app.core.MessageArchive
+import com.attentionguard.app.core.CaptureMode
 import com.attentionguard.app.core.Prefs
-import com.attentionguard.app.core.CaptureOrigin
 import com.attentionguard.app.core.EventStore
+import com.attentionguard.app.MarkChatActivity
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Test
@@ -28,12 +30,17 @@ import java.time.Duration
 import java.time.LocalDate
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executor
 import java.util.concurrent.TimeUnit
 
 class TestCaptureService : ChatCaptureService() {
     var activeRoot: AccessibilityNodeInfo? = null
+    val screenshots = mutableListOf<TakeScreenshotCallback>()
     override fun getRootInActiveWindow() = activeRoot
     override fun getWindows() = emptyList<AccessibilityWindowInfo>()
+    override fun takeScreenshot(displayId: Int, executor: Executor, callback: TakeScreenshotCallback) {
+        screenshots.add(callback)
+    }
     fun connect() { super.onServiceConnected() }
 }
 
@@ -68,6 +75,28 @@ class ChatCaptureServiceTest {
         }
     }
     private fun tick(seconds: Long = 2) { shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(seconds)); drain() }
+    private fun advance(ms: Long) { shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(ms)); drain() }
+    private fun mark() = windows.views.asSequence().flatMap { children(it) }
+        .first { it.contentDescription == "标记当前微信会话" }.performClick()
+    private fun withInfoButton(chat: AccessibilityNodeInfo, onClick: () -> Unit): AccessibilityNodeInfo = chat.apply {
+        val button = node(rect = Rect(310, 35, 360, 85)).apply {
+            viewIdResourceName = "com.tencent.mm:id/fq"; isClickable = true; contentDescription = "聊天信息"
+        }
+        shadowOf(button).setOnPerformActionListener { action, _ ->
+            assertEquals(AccessibilityNodeInfo.ACTION_CLICK, action)
+            onClick(); true
+        }
+        shadowOf(this).addChild(button)
+    }
+    private fun infoPage(title: String = "校园创想课程讨论群"): AccessibilityNodeInfo = node().apply {
+        shadowOf(this).addChild(node("聊天信息", Rect(80, 35, 280, 68)))
+        for ((label, value) in listOf("群公告" to "不要误取这条公告", "群聊名称" to title)) {
+            val row = node()
+            shadowOf(row).addChild(node(label).apply { viewIdResourceName = "android:id/title" })
+            shadowOf(row).addChild(node(value).apply { viewIdResourceName = "android:id/summary" })
+            shadowOf(this).addChild(row)
+        }
+    }
     @After fun cleanup() { controller.destroy(); CaptureRuntime.actions = null; CaptureRuntime.history = null }
 
     @Test fun entryShowsAccessibilityOverlayImmediatelyAndRecordsOrdinaryChat() {
@@ -91,15 +120,78 @@ class ChatCaptureServiceTest {
         service.activeRoot = root(); service.connect(); tick(); tick()
         MessageArchive(context).use { assertEquals(1, it.count().total) }
     }
-    @Test fun manualRecognitionUsesCurrentWeChatEvenWhenAutoAnalysisIsOff() {
+    @Test fun informationalEventIsShownEvenWhenItDoesNotNeedAnUrgentReminder() {
+        service.activeRoot = root(message = "学分数据尚未导入，大家莫急")
+        service.connect(); tick()
+        assertEquals(1, EventStore(context).load().size)
+        assertTrue(windows.views.asSequence().flatMap { children(it) }.filterIsInstance<android.widget.TextView>()
+            .any { it.text.toString().contains("事件类型") })
+        tick()
+        assertTrue(windows.views.asSequence().flatMap { children(it) }.filterIsInstance<android.widget.TextView>()
+            .any { it.text.toString().contains("事件类型") })
+    }
+    @Test fun intentModeUsesCurrentWeChatEvenWhenAutoAnalysisIsOff() {
         Prefs(context).autoAnalyze = false
         service.activeRoot = root(message = "请大家明天提交作业")
         service.connect(); tick()
-        button("识别当前聊天").performClick(); drain()
-        val event = EventStore(context).load().single()
-        assertEquals(CaptureOrigin.WECHAT_MANUAL, event.captureOrigin)
+        button("切换意图分析").performClick(); tick()
+        assertEquals(CaptureMode.INTENT, Prefs(context).captureMode)
+        assertTrue(EventStore(context).load().isEmpty())
         assertTrue(windows.views.asSequence().flatMap { children(it) }.filterIsInstance<android.widget.TextView>()
             .any { it.text.toString().contains("可能在提出行动请求") })
+    }
+    @Test fun untitledBlockedChatCanBeAnalyzedWithoutSavingAndStaysVisibleAfterPoll() {
+        Prefs(context).whitelist = setOf("Allowed")
+        service.activeRoot = root(title = "", message = "请大家明天提交作业")
+        service.connect(); tick()
+        button("切换意图分析").performClick(); drain(); tick()
+        val labels = windows.views.asSequence().flatMap { children(it) }.filterIsInstance<android.widget.TextView>()
+            .map { it.text.toString() }.toList()
+        assertTrue(labels.any { it.contains("可能在提出行动请求") })
+        assertTrue(labels.any { it.contains("重要性 · 高") })
+        assertTrue(labels.any { it == "语境置信度" })
+        assertTrue(labels.any { Regex("[高中低] \\d+%").matches(it) })
+        assertTrue(EventStore(context).load().isEmpty())
+        MessageArchive(context).use { assertEquals(0, it.count().total) }
+    }
+    @Test fun analyzingJustAfterSwitchingChatsKeepsTheNewResult() {
+        Prefs(context).autoAnalyze = false
+        service.activeRoot = root(title = "First", message = "hello")
+        service.connect(); tick()
+        service.activeRoot = root(title = "Second", message = "请大家明天提交作业")
+        button("切换意图分析").performClick(); drain(); tick()
+        val labels = windows.views.asSequence().flatMap { children(it) }.filterIsInstance<android.widget.TextView>()
+            .map { it.text.toString() }.toList()
+        assertTrue(labels.any { it.contains("可能在提出行动请求") })
+        assertTrue(labels.any { it.contains("重要性 · 高") })
+        assertTrue(EventStore(context).load().isEmpty())
+    }
+    @Test fun intentModeKeepsUpdatingWithoutArchivingAndEventModeResumes() {
+        Prefs(context).autoAnalyze = false
+        service.activeRoot = root(message = "初始文字")
+        service.connect(); tick()
+        MessageArchive(context).use { assertEquals(1, it.count().total) }
+        button("切换意图分析").performClick(); tick()
+        assertEquals(CaptureMode.INTENT, Prefs(context).captureMode)
+        service.activeRoot = root(message = "请大家明天提交作业")
+        tick()
+        MessageArchive(context).use { assertEquals(1, it.count().total) }
+        assertTrue(EventStore(context).load().isEmpty())
+        assertFalse(service.armHistory(HistoryConfig("Test group", HistoryRange(LocalDate.now(), LocalDate.now()), false)))
+        assertTrue(windows.views.asSequence().flatMap { children(it) }.filterIsInstance<android.widget.TextView>()
+            .any { it.text.toString().contains("可能在提出行动请求") })
+        button("事件监测").performClick(); tick()
+        assertEquals(CaptureMode.EVENT, Prefs(context).captureMode)
+        MessageArchive(context).use { assertEquals(2, it.count().total) }
+    }
+    @Test fun persistedIntentModeStartsWithoutAnEventCapture() {
+        Prefs(context).captureMode = CaptureMode.INTENT
+        service.activeRoot = root(title = "", message = "请大家明天提交作业")
+        service.connect(); tick()
+        assertTrue(windows.views.asSequence().flatMap { children(it) }.filterIsInstance<android.widget.TextView>()
+            .any { it.text.toString().contains("可能在提出行动请求") })
+        MessageArchive(context).use { assertEquals(0, it.count().total) }
+        assertTrue(EventStore(context).load().isEmpty())
     }
     @Test fun foreignForegroundAndWhitelistNeverPersistContent() {
         Prefs(context).whitelist = setOf("Allowed")
@@ -110,6 +202,105 @@ class ChatCaptureServiceTest {
         MessageArchive(context).use { assertEquals(0, it.count().total) }
         assertTrue(windows.views.isEmpty())
     }
+    @Test fun blockedCurrentChatCanBeMarkedAfterFreshForegroundVerification() {
+        Prefs(context).whitelist = setOf("Allowed")
+        service.activeRoot = root(title = "Test group", message = "visible text")
+        service.connect(); tick()
+        MessageArchive(context).use { assertEquals(0, it.count().total) }
+        windows.views.asSequence().flatMap { children(it) }.first { it.contentDescription == "标记当前微信会话" }.performClick(); tick()
+        assertEquals(setOf("Allowed", "Test group"), Prefs(context).whitelist)
+        MessageArchive(context).use { assertEquals("visible text", it.recent().single().message.text) }
+    }
+
+    @Test fun manualMarkWaitsForInfoNavigationAndBindsTheFullNameAfterReturning() {
+        val original = withInfoButton(root(title = "", message = "请在周三下午之前提交课程作业")) { }
+        service.activeRoot = original
+        service.connect(); tick(); mark()
+        advance(500)
+        assertTrue(service.screenshots.isEmpty())
+        assertNull(shadowOf(service).nextStartedActivity)
+
+        service.activeRoot = infoPage()
+        advance(300)
+        assertEquals(listOf(AccessibilityService.GLOBAL_ACTION_BACK), shadowOf(service).globalActionsPerformed)
+        service.activeRoot = root(title = "", message = "请在周三下午之前提交课程作业")
+        advance(300)
+        val confirmation = shadowOf(service).nextStartedActivity!!
+        assertEquals(MarkChatActivity::class.java.name, confirmation.component?.className)
+        assertEquals("校园创想课程讨论群", confirmation.getStringExtra(MarkChatActivity.EXTRA_SUGGESTED_TITLE))
+        assertEquals("微信聊天信息", confirmation.getStringExtra(MarkChatActivity.EXTRA_TITLE_SOURCE))
+        assertTrue(service.screenshots.isEmpty())
+        Prefs(context).addRecognitionTerm("校园创想课程讨论群")
+        assertTrue(service.confirmCurrentTitle("校园创想课程讨论群"))
+        tick()
+        MessageArchive(context).use { assertEquals("校园创想课程讨论群", it.recent().single().group) }
+        assertTrue(CaptureDiagnostics(context).summary().contains("标题手动确认"))
+
+        service.activeRoot = root(title = "另一个聊天", message = "请在周三下午之前提交课程作业")
+        tick()
+        assertNull(CaptureRuntime.lastVisibleTitle)
+        MessageArchive(context).use { assertEquals(1, it.count().total) }
+    }
+
+    @Test fun returningToAnotherChatNeverOpensTheOldGroupsConfirmation() {
+        service.activeRoot = withInfoButton(root(title = "", message = "请在周三下午之前提交课程作业")) {
+            service.activeRoot = infoPage()
+        }
+        service.connect(); tick(); mark(); advance(300)
+        assertEquals(1, shadowOf(service).globalActionsPerformed.size)
+        service.activeRoot = root(title = "其他群", message = "完全不同的聊天内容")
+        tick(4)
+        assertNull(shadowOf(service).nextStartedActivity)
+        assertTrue(service.screenshots.isEmpty())
+        assertFalse(service.confirmCurrentTitle("校园创想课程讨论群"))
+    }
+
+    @Test fun unrelatedPageTimeoutDoesNotPressBackOrLaunchConfirmation() {
+        service.activeRoot = withInfoButton(root(title = "", message = "请在周三下午之前提交课程作业")) { }
+        service.connect(); tick(); mark()
+        service.activeRoot = node("微信设置")
+        tick(4)
+        assertTrue(shadowOf(service).globalActionsPerformed.isEmpty())
+        assertTrue(service.screenshots.isEmpty())
+        assertNull(shadowOf(service).nextStartedActivity)
+    }
+
+    @Test fun failedInfoNavigationFallsBackToOcrOnlyAfterWaiting() {
+        service.activeRoot = withInfoButton(root(title = "", message = "请在周三下午之前提交课程作业")) { }
+        service.connect(); tick(); mark(); advance(500)
+        assertTrue(service.screenshots.isEmpty())
+        tick(4)
+        assertEquals(1, service.screenshots.size)
+        assertTrue(shadowOf(service).globalActionsPerformed.isEmpty())
+        service.screenshots.single().onFailure(2); advance(1)
+        assertEquals("", shadowOf(service).nextStartedActivity!!.getStringExtra(MarkChatActivity.EXTRA_SUGGESTED_TITLE))
+    }
+
+    @Test fun oldOcrCallbackCannotCompleteANewerMarkRequest() {
+        service.activeRoot = root(title = "", message = "请在周三下午之前提交课程作业")
+        service.connect(); tick(); mark(); advance(300)
+        val old = service.screenshots.single()
+        service.activeRoot = root(title = "", message = "请在周四上午八点之前到达教室")
+        tick(); mark(); advance(300)
+        assertEquals(2, service.screenshots.size)
+        old.onFailure(2); advance(1)
+        assertNull(shadowOf(service).nextStartedActivity)
+        service.screenshots.last().onFailure(2); advance(1)
+        assertNotNull(shadowOf(service).nextStartedActivity)
+    }
+
+    @Test fun disablingCaptureCancelsAnInFlightInfoRead() {
+        service.activeRoot = withInfoButton(root(title = "", message = "请在周三下午之前提交课程作业")) {
+            service.activeRoot = infoPage()
+        }
+        service.connect(); tick(); mark()
+        Prefs(context).enabled = false
+        tick(4)
+        assertTrue(shadowOf(service).globalActionsPerformed.isEmpty())
+        assertNull(shadowOf(service).nextStartedActivity)
+        assertFalse(service.confirmCurrentTitle("校园创想课程讨论群"))
+    }
+
     @Test fun preparedHistoryCannotScrollUntilTheOverlayStartIsPressedAndLeavingPauses() {
         service.activeRoot = root(); service.connect(); tick()
         val config = HistoryConfig("Test group", HistoryRange(LocalDate.now().minusDays(3), LocalDate.now()), false)

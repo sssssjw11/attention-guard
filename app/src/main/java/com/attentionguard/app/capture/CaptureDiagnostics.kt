@@ -41,6 +41,9 @@ class CaptureDiagnostics(context: Context) {
     fun saved(added: Int) = sp.edit().putInt("saved", sp.getInt("saved", 0) + added)
         .putLong("saved_at", System.currentTimeMillis()).putString("storage", "正常").apply()
     fun storageError() = sp.edit().putString("storage", "保存失败，未覆盖已有消息").apply()
+    fun analyzed(mode: String, messages: Int, events: Int, category: String, score: Int) =
+        sp.edit().putString("analysis", "$mode · $messages 条文字 · $events 件事项 · $category · $score")
+            .putLong("analyzed_at", System.currentTimeMillis()).apply()
     fun overlay(value: String) {
         if (sp.getString("overlay", "") == value) return
         val edit = sp.edit().putString("overlay", value)
@@ -67,6 +70,7 @@ class CaptureDiagnostics(context: Context) {
             "上次微信检查：${time(snapshot.inspectedAt)}",
             "读取结果：${snapshot.readResult}",
             "节点 ${snapshot.nodes} · 气泡 ${snapshot.knownNodes} · 结构匹配 ${snapshot.structuralNodes} · 消息 ${snapshot.messages}",
+            "最近判断：${sp.getString("analysis", "尚未分析")}",
             "上次落盘：${time(snapshot.savedAt)} · ${snapshot.storage}",
             "悬浮窗：${snapshot.overlay}",
             "上次挂窗：${time(snapshot.overlayAt)} · ${snapshot.overlayResult}",

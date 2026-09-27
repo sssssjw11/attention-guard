@@ -2,6 +2,7 @@ package com.attentionguard.app.core
 
 import org.junit.Assert.*
 import org.junit.Test
+import java.util.Calendar
 
 class EventQueriesTest {
     private val events = DemoAttentionData.events
@@ -45,6 +46,26 @@ class EventQueriesTest {
         assertTrue(filterEvents(emptyList(), EventFilter.ALL, "").isEmpty())
         assertEquals(3, filterEvents(events, EventFilter.FOLLOWING, "").size)
         assertEquals(1, filterEvents(events, EventFilter.ACTION, "").size)
+    }
+    @Test fun dateAndPriorityFiltersUseCaptureTimeAndKeepUnknownDatesOutOfDateBuckets() {
+        val now = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 12)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        val day = 24L * 60L * 60L * 1000L
+        val today = events[0].copy(id = "today", priority = EventPriority.P0, sourceCapturedAt = now - 60 * 60 * 1000L)
+        val recent = events[1].copy(id = "recent", priority = EventPriority.P1, sourceCapturedAt = now - 2 * day)
+        val old = events[2].copy(id = "old", priority = EventPriority.P2, sourceCapturedAt = now - 8 * day)
+        val unknown = events[3].copy(id = "unknown", priority = EventPriority.P3, sourceCapturedAt = null)
+        val all = listOf(today, recent, old, unknown)
+        assertEquals(listOf(today), filterEvents(all, EventFilter.ALL, "", EventDateFilter.TODAY, now = now))
+        assertEquals(2, filterEvents(all, EventFilter.ALL, "", EventDateFilter.LAST_3_DAYS, now = now).size)
+        assertEquals(3, filterEvents(all, EventFilter.ALL, "", EventDateFilter.LAST_7_DAYS, now = now).size)
+        assertEquals(listOf(today), filterEvents(all, EventFilter.ALL, "", priorityFilter = EventPriorityFilter.P0, now = now))
+        assertEquals(listOf(unknown), filterEvents(all, EventFilter.ALL, "", priorityFilter = EventPriorityFilter.P3, now = now))
+        assertEquals(4, filterEvents(all, EventFilter.ALL, "", now = now).size)
     }
     @Test fun signatureIncludesConversationAndApplication() {
         val sample = ChatSnapshot("群 A", listOf(Msg("other", "同一条消息")), "wechat")

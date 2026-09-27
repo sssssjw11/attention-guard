@@ -1,7 +1,9 @@
+param([string[]]$Only = @())
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $revision = '0.468.0'
-$names = @('focus','notebook-tabs','messages-square','sliders-horizontal','settings-2','arrow-left','chevron-right','chevron-down','check','undo-2','clock-3','search','x','shield-check','key-round','radio','pause','circle-alert','arrow-up-right','eye','move','minimize-2','rotate-ccw','save','wifi','check-check')
+$names = @('focus','notebook-tabs','messages-square','sliders-horizontal','settings-2','arrow-left','chevron-right','chevron-down','check','undo-2','clock-3','search','x','shield-check','key-round','radio','pause','circle-alert','arrow-up-right','eye','move','minimize-2','rotate-ccw','save','wifi','check-check','archive','bookmark-plus','scan-text','activity','smile','ellipsis','grip-horizontal','circle-check','calendar-plus')
+if ($Only.Count) { $names = $names | Where-Object { $_ -in $Only } }
 $source = Join-Path $root 'docs/brand/lucide'
 $dest = Join-Path $root 'app/src/main/res/drawable'
 New-Item -ItemType Directory -Force $source | Out-Null

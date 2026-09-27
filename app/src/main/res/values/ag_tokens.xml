@@ -1,5 +1,5 @@
 <resources>
-    <color name="ag_background">#F5F6F7</color>
+    <color name="ag_background">#F3F5F2</color>
     <color name="ag_surface">#FFFFFF</color>
     <color name="ag_ink">#1D2927</color>
     <color name="ag_secondary">#586963</color>
@@ -21,9 +21,14 @@
     <dimen name="ag_content_max">680dp</dimen>
     <dimen name="ag_radius">8dp</dimen>
     <dimen name="ag_touch">48dp</dimen>
-    <dimen name="ag_type_title">27sp</dimen>
+    <dimen name="ag_type_display">40sp</dimen>
+    <dimen name="ag_type_title">26sp</dimen>
     <dimen name="ag_type_heading">18sp</dimen>
     <dimen name="ag_type_body">15sp</dimen>
     <dimen name="ag_type_label">13sp</dimen>
     <dimen name="ag_type_caption">12sp</dimen>
+    <dimen name="ag_overlay_heading">16sp</dimen>
+    <dimen name="ag_overlay_body">14sp</dimen>
+    <dimen name="ag_overlay_label">12sp</dimen>
+    <dimen name="ag_overlay_caption">11sp</dimen>
 </resources>

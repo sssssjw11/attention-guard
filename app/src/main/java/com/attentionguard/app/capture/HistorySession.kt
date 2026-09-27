@@ -74,6 +74,7 @@ interface CaptureActions {
     fun armHistory(config: HistoryConfig): Boolean
     fun pauseHistory()
     fun cancelHistory()
+    fun confirmCurrentTitle(title: String): Boolean = false
 }
 
 /** Same-process UI bridge; no exported broadcast or remote control surface. */
