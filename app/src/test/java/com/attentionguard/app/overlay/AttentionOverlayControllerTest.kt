@@ -102,6 +102,26 @@ class AttentionOverlayControllerTest {
             .any { it.text.toString().contains("事件类型") && it.text.toString().contains("P0") })
     }
 
+    @Test fun aNewScreenOfTheSameChatKeepsTheEventCardAndItsHeight() {
+        ShadowSettings.setCanDrawOverlays(true)
+        prefs.overlaySize = OverlaySize.EXPANDED
+        val first = DemoAttentionData.events.first()
+        overlay.showEvent(first)
+        val mounted = windows.views.single()
+        val group = first.sourceGroup
+        overlay.showStatus(group, "已识别 9 条可见消息")
+        assertSame(mounted, windows.views.single())
+        assertTrue(descendants(mounted).filterIsInstance<android.widget.TextView>().any { it.text.toString().contains("事件类型") })
+        val height = (mounted as ViewGroup).getChildAt(0).measuredHeight
+        overlay.showEvent(first.copy(id = "short", title = "短", summary = "短"))
+        assertSame(mounted, windows.views.single())
+        assertTrue(height > 0)
+        assertTrue(mounted.getChildAt(0).measuredHeight >= height)
+        // Another chat is a real change: back to the idle layout.
+        overlay.showStatus("另一个群", "已识别 3 条可见消息")
+        assertFalse(descendants(windows.views.single()).filterIsInstance<android.widget.TextView>().any { it.text.toString().contains("事件类型") })
+    }
+
     @Test fun collapsedCardKeepsHistoryActionAndCanExpand() {
         ShadowSettings.setCanDrawOverlays(true)
         prefs.overlayCollapsed = true

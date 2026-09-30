@@ -8,6 +8,7 @@ import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.Rect
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Handler
@@ -86,6 +87,10 @@ class AttentionOverlayController(private val context: Context) {
     private var renderedSize: OverlaySize? = null
     private var renderedInsight: IntentInsight? = null
     private var renderedMenuOpen = false
+    // Height of the last event card, so the next event for the same chat does
+    // not shrink the window and bounce it back (the "屏闪" users saw).
+    private var renderedEventShape: List<Any?>? = null
+    private var renderedEventHeight = 0
     private var hiddenForCapture = false
     private val diagnostics = CaptureDiagnostics(context)
     private val accessibilityWindow = context is AccessibilityService
@@ -174,6 +179,13 @@ class AttentionOverlayController(private val context: Context) {
         }
 
     fun isShowing() = panel != null
+    /** Screen-space overlap; an unmeasured panel is treated as covering. */
+    fun covers(region: Rect): Boolean {
+        val host = panel ?: return false
+        if (host.width <= 0 || host.height <= 0) return true
+        val at = IntArray(2).also(host::getLocationOnScreen)
+        return Rect.intersects(Rect(at[0], at[1], at[0] + host.width, at[1] + host.height), region)
+    }
     fun setHiddenForCapture(hidden: Boolean) {
         hiddenForCapture = hidden
         panel?.visibility = if (hidden) View.INVISIBLE else View.VISIBLE
@@ -189,6 +201,7 @@ class AttentionOverlayController(private val context: Context) {
         renderedInsight = null
         lastInsight = null
         menuOpen = false
+        renderedEventShape = null; renderedEventHeight = 0
         diagnostics.overlay("已隐藏")
     }
     fun showIdle(group: String?, status: String = "正在监测可见消息", history: HistorySession? = null,
@@ -196,6 +209,22 @@ class AttentionOverlayController(private val context: Context) {
         this.group = group; this.status = status; this.history = history; this.actionLabel = actionLabel
         lastEvent = null; lastInsight = null; loading = false; expanded = false; render()
     }
+    /**
+     * A new screen of the chat whose event is on the card updates only the
+     * status line. Collapsing to idle and re-expanding ~100 ms later, when the
+     * local event is saved, is what made event mode flash; intent mode never
+     * passes through that idle layout.
+     */
+    fun showStatus(group: String?, status: String, history: HistorySession? = null,
+                   actionLabel: String = "切换意图分析") {
+        val event = lastEvent
+        if (event == null || history != null || this.history != null || group.isNullOrBlank() ||
+            this.group != group) { showIdle(group, status, history, actionLabel); return }
+        this.status = status; this.actionLabel = actionLabel
+        render()
+    }
+    /** Clears a stale "整理中" label without touching the card content. */
+    fun clearLoading() { if (loading) { loading = false; render() } }
     fun showLoading(useModel: Boolean = false) {
         history = null
         loading = true; usingModel = useModel; render()
@@ -494,8 +523,16 @@ class AttentionOverlayController(private val context: Context) {
             visibility = view.visibility
             addView(view, FrameLayout.LayoutParams(-1, -2))
         }
+        val eventCard = event != null && !bubble && mode == CaptureMode.EVENT && history == null
+        // Replacing one event with another for the same chat only changes the
+        // text; keep at least the previous height so the window does not resize.
+        val eventShape = if (eventCard) listOf(group, size, expanded, menuOpen, evidenceExpanded) else null
+        if (eventShape != null && eventShape == renderedEventShape && renderedEventHeight > 0 && panel != null)
+            view.minimumHeight = renderedEventHeight
         host.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
             View.MeasureSpec.makeMeasureSpec(availableHeight, View.MeasureSpec.AT_MOST))
+        renderedEventShape = eventShape
+        renderedEventHeight = if (eventShape != null) host.measuredHeight else 0
         val maxX = (bounds.width() - insets.right - width).coerceAtLeast(insets.left)
         val composerReserve = if (bubble || collapsed) 0 else ui.dp(112)
         val maxY = (bounds.height() - insets.bottom - insets.top - host.measuredHeight - composerReserve).coerceAtLeast(0)
