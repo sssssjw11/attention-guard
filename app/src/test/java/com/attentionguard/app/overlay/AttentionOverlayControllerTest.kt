@@ -295,6 +295,31 @@ class AttentionOverlayControllerTest {
         assertEquals(52, (windows.views.single().layoutParams as WindowManager.LayoutParams).width)
     }
 
+    @Test fun deepenAndCancelUpdateSameWindowAndReplyCanBeCopied() {
+        ShadowSettings.setCanDrawOverlays(true)
+        prefs.captureMode = CaptureMode.INTENT; prefs.overlaySize = OverlaySize.EXPANDED
+        overlay.showIntent(IntentInsight("暂无明确请求", "继续观察", "算了，你忙吧", "甲", "聊天", 1L))
+        val host = windows.views.single()
+        var requested = 0; var cancelled = 0
+        overlay.onDeepenIntent = { requested++ }; overlay.onCancelDeepenIntent = { cancelled++ }
+        button("深入理解").performClick(); assertEquals(1, requested)
+        overlay.setLiveAnalysis(LiveAnalysisState(busy = true))
+        shadowOf(Looper.getMainLooper()).idle()
+        assertSame(host, windows.views.single())
+        button("取消深入理解").performClick(); assertEquals(1, cancelled)
+        val proof = com.attentionguard.app.core.ContextEvidence("live:0", "算了，你忙吧", "other", "甲", null)
+        val result = com.attentionguard.app.core.ContextInsight(com.attentionguard.app.core.AnalysisScene.FRIEND,
+            "需要结合前文核对", emptyList(), listOf(com.attentionguard.app.core.ReplySuggestion("你想先暂停吗？", "不确定所指时", listOf(proof))), emptyList(), "f")
+        overlay.setLiveAnalysis(LiveAnalysisState(insight = result))
+        shadowOf(Looper.getMainLooper()).idle()
+        assertSame(host, windows.views.single())
+        button("复制回复").performClick()
+        assertEquals("你想先暂停吗？", context.getSystemService(android.content.ClipboardManager::class.java).primaryClip!!.getItemAt(0).text.toString())
+        prefs.overlaySize = OverlaySize.BUBBLE
+        overlay.showIntent(IntentInsight("暂无明确请求", "继续观察", "算了，你忙吧", "甲", "聊天", 1L), false)
+        assertEquals(52, (host.layoutParams as WindowManager.LayoutParams).width)
+    }
+
     private fun showAtRememberedPosition() {
         ShadowSettings.setCanDrawOverlays(true)
         prefs.bubbleX = 40

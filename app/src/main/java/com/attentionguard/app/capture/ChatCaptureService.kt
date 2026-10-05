@@ -44,6 +44,7 @@ open class ChatCaptureService : AccessibilityService(), CaptureActions, Recordin
     private lateinit var receipt: HistoryReceipt
     private lateinit var shared: SharedPreferences
     private var overlay: AttentionOverlayController? = null
+    private var liveIntent: LiveIntentController? = null
     private var snapshot: ChatSnapshot? = null
     private var inspection: ChatInspection? = null
     private var signature = ""
@@ -134,8 +135,15 @@ open class ChatCaptureService : AccessibilityService(), CaptureActions, Recordin
             panel.onRefreshIntent = { if (prefs.captureMode == CaptureMode.INTENT) { intentSignature = null; safeCapture() } }
             panel.onRecordingToggle = {
                 if (CaptureRuntime.recording?.state == RecordingState.ACTIVE) pauseRecording()
-                else startRecording()
+                else ensureProfileRecording { liveIntent?.recordingStarted(it) }
             }
+            panel.onDeepenIntent = { liveIntent?.deepen() }
+            panel.onCancelDeepenIntent = { liveIntent?.cancel() }
+            panel.onChooseScene = { liveIntent?.chooseScene() }
+            panel.onCreateProfile = { liveIntent?.createProfile() }
+            panel.onChooseProfile = { liveIntent?.chooseProfile() }
+            panel.onProfiles = { liveIntent?.openProfiles() }
+            panel.onIntentEvidence = { title, proofs -> liveIntent?.showEvidence(title, proofs) }
             panel.onRecordingStop = { stopRecording() }
             panel.onSaveIntentEvent = { saveCurrentIntentEvents() }
             panel.onRecordingLibrary = {
@@ -160,8 +168,10 @@ open class ChatCaptureService : AccessibilityService(), CaptureActions, Recordin
             panel.onHistoryStart = { startHistory() }
             panel.onHistoryPause = { pauseHistory() }
             panel.onHistoryCancel = { cancelHistory() }
-            panel.onDismiss = { dismissedTitle = snapshot?.title ?: "" }
+            panel.onDismiss = { liveIntent?.reset(); dismissedTitle = snapshot?.title ?: "" }
         }
+        liveIntent = LiveIntentController(this, { overlay?.setLiveAnalysis(it) }, { overlay?.toast(it) },
+            ::ensureProfileRecording, { CaptureRuntime.recording }, { pauseRecording("已打开对象档案") })
         ocr = OnDeviceChatOcr(this, { region -> overlay?.covers(region) ?: false }) { hidden -> overlay?.setHiddenForCapture(hidden) }
         updateKeepAlive()
         diagnostics.state("等待前台微信会话")
@@ -179,6 +189,7 @@ open class ChatCaptureService : AccessibilityService(), CaptureActions, Recordin
                 diagnostics.pipeline("TITLE_BIND", if (event.contentChangeTypes == 0) "NAV_PAUSE" else "PANE_PAUSE")
             pinnedTitle?.pauseContinuity(); outOfScopeTitle?.pauseContinuity()
             pauseRecording("微信页面已切换，请确认目标会话后继续记录")
+            liveIntent?.reset()
         }
         if (event.packageName?.toString() == adapter.pkg && event.eventType in intArrayOf(
                 AccessibilityEvent.TYPE_VIEW_SCROLLED, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED)) ocr?.retry()
@@ -203,6 +214,7 @@ open class ChatCaptureService : AccessibilityService(), CaptureActions, Recordin
         cancelAutomaticTitle()
         ocr?.cancel()
         cancelPendingAnalysis()
+        liveIntent?.reset()
         snapshot = null; inspection = null; signature = ""; intentSignature = null
         currentOrigin = CaptureOrigin.WECHAT_AUTO
         CaptureRuntime.lastVisibleTitle = null
@@ -425,6 +437,7 @@ open class ChatCaptureService : AccessibilityService(), CaptureActions, Recordin
     private fun captureIntent(result: ChatInspection) {
         CaptureRuntime.lastVisibleTitle = null
         val current = result.snapshot?.takeIf { result.knownBubbles + result.structuralBubbles > 0 }
+        liveIntent?.observe(current)
         if (current == null) {
             pauseRecording("当前没有可读聊天，已暂停记录")
             overlay?.setRecording(CaptureRuntime.recording)
@@ -446,6 +459,20 @@ open class ChatCaptureService : AccessibilityService(), CaptureActions, Recordin
         } else {
             diagnostics.state("意图分析 · 整屏语境已更新")
             overlay?.showIntent(insight, expand = false)
+        }
+    }
+
+    private fun ensureProfileRecording(onReady: (ChatRecording) -> Unit) {
+        if (CaptureRuntime.recording?.state != RecordingState.ACTIVE && !startRecording()) return
+        val target = CaptureRuntime.recording ?: return
+        val revision = recordingRevision
+        storageWorker.execute {
+            val stored = runCatching { archive.recording(target.id) }.getOrNull()
+            main.post {
+                if (alive && revision == recordingRevision && stored != null &&
+                    CaptureRuntime.recording?.id == stored.id && CaptureRuntime.recording?.state == RecordingState.ACTIVE)
+                    onReady(stored)
+            }
         }
     }
 
@@ -1000,6 +1027,7 @@ open class ChatCaptureService : AccessibilityService(), CaptureActions, Recordin
         }
         main.removeCallbacksAndMessages(null)
         ocr?.close(); ocr = null
+        liveIntent?.close(); liveIntent = null
         overlay = null
         storageWorker.shutdown(); analysisWorker.shutdownNow()
         super.onDestroy()
